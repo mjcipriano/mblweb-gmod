@@ -1,0 +1,4 @@
+<form action="[% html_site_cgi %]/[% database_name %]">
+<input type="hidden" name="page" value="bulkannotation">
+<input type="submit" name="type" value="Upload ORF Annotations">
+</form>

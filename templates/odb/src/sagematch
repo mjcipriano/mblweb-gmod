@@ -1,0 +1,221 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+use Bio::SeqIO;
+use Bio::Graphics;
+use Bio::SeqFeature::Generic;
+use File::Temp qw/ tempfile tempdir /;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $session_id = $stash->get('session_id');
+my %session;
+
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+
+my $access_list = $mbl->get_sage_access_libraries($session{'login_id'});
+my $login_id = $session{'login_id'};
+
+my $image_id = 1;
+
+my %strand;
+$strand{-1} = "Antisense";
+$strand{1} = "Sense";
+$strand{0} = "None";
+
+my $error = 0;
+my $accession_number = param('accession_number');
+if(defined(param('sequence')) || defined($accession_number) )
+{
+
+	# Check for fasta header
+	my $input_seq = param('sequence');
+	my $seqs;
+
+	if(defined($input_seq) && $input_seq ne '')
+	{
+		# Check if it is all blank
+		my $skip = 0;
+		if($input_seq =~ /^\s*$/)
+		{
+			$skip = 1;
+		} elsif($input_seq =~ /^\>/)
+		{
+			# Do nothing
+		} else
+		{
+			$input_seq = ">Input_sequence\n" . $input_seq;
+		}
+		if(!$skip)
+		{
+			my $stringio = IO::String->new($input_seq);
+			eval {$seqs = Bio::SeqIO->new( '-fh' =>$stringio);};
+		}
+	}
+
+	if($@)
+	{
+	        print "<h2><b>Sequence Not in recognized format</b></h2>";
+		$error = 1;
+	} 	
+	if(!$error)
+	{
+		my @seq_array;
+		if($seqs)
+		{
+			while(my $seqobj = $seqs->next_seq())
+			{
+				if($seqobj->seq =~ /^[CATGN]+$/i)
+				{
+					push(@seq_array, $seqobj);
+				} else
+				{
+					print "<br><b>" . $seqobj->display_name . " is not a nucleotide sequence</b><p>";
+				}
+			}
+		}
+
+		if(defined($accession_number))
+		{
+			if($accession_number =~ /^[\w\d]+$/)
+			{
+				my $seq_gb = $mbl->get_genbank_seq( $accession_number, 'nt');
+				if($seq_gb)
+				{
+					push(@seq_array, $seq_gb);
+				}
+					
+			}
+		}
+
+		foreach my $seqobj (@seq_array)
+		{
+			my $seq = lc($seqobj->seq);
+			my $rc_seq = lc($seqobj->revcom->seq);
+			my @features;
+			
+			my $seq_size = length($seq);
+			# Now get all of my sage tags I have access to
+	
+			my $sth = $dbh->prepare("select distinct st.tagid, st.sequence from sage_tags st, sage_results sr where sr.tagid = st.tagid AND sr.library IN ($access_list) AND sr.result > 0 order by st.tagid");
+			$sth->execute();
+			while(my $row = $sth->fetchrow_hashref)
+			{
+				my $sageseq = lc($row->{sequence});
+				while($seq =~ /$sageseq/g)
+				{
+					my $feature = new Bio::SeqFeature::Generic ( -start => $-[0]+1, -end=> $+[0]+1, -strand=>1, -primary=>'sagetag', -source_tag=>'Sequence', -display_name=>$row->{tagid}, -tag=> { sagetag_sequence=>$row->{sequence} } );
+					push(@features, $feature);
+				}
+				while($rc_seq =~ /$sageseq/g)
+				{
+					my $feature = new Bio::SeqFeature::Generic ( -start =>$seq_size - $-[0] + 1 , -end=>$seq_size - $+[0] + 1, -strand=>-1, -primary=>'sagetag', -source_tag=>'Sequence', -display_name=>$row->{tagid}, -tag=> { sagetag_sequence=>$row->{sequence} } );
+					push(@features, $feature);
+				}
+			}
+
+			# Now find NLAIII sites
+			my @nla_sites;
+			while( $seq =~ /catg/gi)
+			{
+				my $feature = new Bio::SeqFeature::Generic ( -start => $-[0]+1, -end=> $+[0]+1, -strand=>0, -primary=>'nlaIII', -source_tag=>'NLAIII', -display_name=>'' );
+				push(@nla_sites, $feature);
+			}
+			my @sorted_features = sort {$a->start <=> $b->start} @features;
+			$seqobj->add_SeqFeature(@sorted_features);
+			print "<center>";
+			print h3("Sequence: " . $seqobj->display_id);
+
+			# Make a graphics panel;
+
+			my $panel = Bio::Graphics::Panel->new(
+								-segment	=> $seqobj,
+								-length		=> $seqobj->length,
+								-key_style	=> 'between',
+								-width		=> 800,
+								-pad_left	=> 10,
+								-pad_right	=> 10
+							);
+
+			$panel->add_track( arrow => Bio::SeqFeature::Generic->new(-start=>1, -end=>$seqobj->length), -bump => 0, -double=>1, -tick => 2);
+			$panel->add_track( arrow=>\@sorted_features, -bgcolor =>'blue', -fgcolor => 'black', -key => 'Sage Tags', -bump => +1, -height=> 10, -label => 1, -description => 0);
+			$panel->add_track( generic=>\@nla_sites, -bgcolor =>'blue', -fgcolor => 'red', -key => 'NLAIII sites', -bump => +1, -height=> 10, -label => 0, -description => 0);
+# Does not Work #	$panel->add_track( translation=>$seq, -global_feature=>1, height=>40, -fgcolor=>'blue', start_codons=>1, -stop_codons=>1, translation=>'6frame', -key=>'Six Frame Translation');
+			
+			my $gd = $panel->gd;
+
+			my ($fh, $full_filename) = tempfile( TEMPLATE => 'tempXXXXX',
+                        DIR => $mbl->gmodweb_html_tmp_sys_dir,
+                        SUFFIX => '.png');
+
+			print $fh $gd->png;
+			close($fh);
+			my @full_filename = split('/',$full_filename);
+		        my $filelen = scalar @full_filename;
+		        my $filename = $full_filename[$filelen-1];
+
+			# Show the graphic
+			print '<img align="middle" name="view" border = 0 src="' .  $mbl->gmodweb_html_tmp_web_dir . '/' .  $filename . '" usemap="#mymap' . $image_id . '" />' . "\n";
+			print '<map name="mymap' . $image_id . '" id="mymap' . $image_id . '">';
+			my $glyphs = $panel->boxes;
+			foreach my $glyph (@$glyphs)
+			{
+				if($glyph->[0]->primary_tag eq 'sagetag')
+				{
+					my $link = sagetag_link($glyph->[0]);
+					print '<area shape="rect" coords="' . $glyph->[1] . ',' . $glyph->[2] . ',', $glyph->[3] . ',', $glyph->[4] . ',' . '" href="' . $link . '" title="recenter" alt="recenter" />';
+				}
+			}
+			print '</map><p>';
+
+			$image_id++;
+
+
+
+
+
+			print "<table border=1><tr><th>TagID</td><th>Sagetag Sequence</td><th>Query Start</td><th>Query Stop</td><th>Strand</td></tr>";
+			foreach my $st_feature(@sorted_features)
+			{
+				print TR( td($mbl->sagetag_link($st_feature->display_name)), td(pre($st_feature->get_tag_values('sagetag_sequence'))), td($st_feature->start), td($st_feature->end), td($strand{$st_feature->strand}) ) ;
+			}
+			print "</table><p></center>";
+		}
+	}
+} else
+{
+	print 	start_form( -method=>'POST'),
+		h1("SAGE Matcher"),
+		h2("Paste a sequence into the box below and/or enter in a genbank accession or gi number for the nucleotide database. You may use either a raw sequence or sequences in fasta format.  Multiple fasta formated sequences can be submitted at the same time.  After submitting, all sampled sage tags that are found within this sequence will be returned."),br,
+		"<b>Sequence</b> ", textarea(-name=>'sequence', -rows=>10, -columns=>80),p,
+		"<b>Accession Number</b>:", textfield({-name=>"accession_number"}),p,
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>'sagematch'),
+		submit,
+		end_form;
+}
+
+sub sagetag_link
+{
+	my $feature = shift;
+	
+	my $this_name = $mbl->get_sage_description_line($feature->display_id, 'Percent', $login_id);
+	my $url = $mbl->organism_home . "?page=showsagetag&tag=" . $feature->display_id;
+	my $overtext = $mbl->get_sage_over_description($feature->display_id, 'Percent', $login_id);
+	my $link = $url .  ';" onmouseover="return overlib(\'' . $overtext . ').\', MOUSEOFF, WIDTH, 300);" onmouseout="return nd();';
+	return $link;
+}
+untie(%session);
+
+[% END %]

@@ -1,0 +1,94 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center><br>
+			[% INCLUDE perl_searchtool 
+			   default_search = 'contig_'
+			   footer_text = '<br><small><i>Examples: contig_7360, read:GLL0088D06, supercontig_716</i></small>' %]
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<br>
+
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+
+		[% html_leftcolumn %]
+
+		</td>
+		<td width="4%"></td>
+		<td width="48%" valign="top">
+		<table border=0 width="100%">
+        <tr class="databody">
+        <td><p><center><h1>Assembly Statistics</h1></center>
+		<p><center>Our assemblies enforce a 100 bp minimum gap size.<p>
+		<form action="[% html_site_cgi %]/[% database_name %]">
+		<input type="hidden" name="page" value="assembly_overview">
+		<input type="hidden" name="width" value="800">
+        <input type="hidden" name="show_repeat" value="Y">
+		<input type="submit" name="assembly" value="Graphical View of Entire Assembly">
+		</form><hr>
+
+		<center>
+		<h3>Sequence Reads</h3>
+	    [% read_datasnapshot %]<p><br>
+		[% readgc_image %]<br><hr>
+
+		<H3>EST Frequencies</H3>
+		[% est_datasnapshot %]<p>
+		[% est_stats %]<p>
+		[% est_image %]<br><hr>
+
+		<h3>Contigs</h3>
+		[% contig_stats %]<p>
+		[% contig_datasnapshot %]<p><hr>
+
+		<h3>Supercontigs</h3>
+		[% supercontig_stats %]<p>
+		[% supercontig_datasnapshot %]<p><br>
+		<p></center>
+
+		</center>
+						&nbsp;
+				</td>
+			</tr>
+		</table>
+		</td>
+	</tr>
+
+</table>
+<hr>
+<table border=0 width="100%">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

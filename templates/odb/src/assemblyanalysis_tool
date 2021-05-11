@@ -1,0 +1,239 @@
+[% PERL %]
+
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $min_bases = param('min_bases');
+my $max_bases = param('max_bases');
+if(!defined($min_bases))
+{
+	$min_bases = 5000;
+}
+
+if(!defined($max_bases))
+{
+	$max_bases = 12000000;
+}
+
+
+param(-name=>'page', -value=>'assembly_overview');
+print "<center>";
+my %types;
+$types{'supercontig'} = 'All Supercontigs';
+$types{'contig'} = 'All Contigs';
+$types{'isolated contigs'} = 'Isolated Contigs';
+print
+	start_form( action=> $mbl->organism_home, method=>'POST'),
+	i("Use this tool to display an overview of the current progress of the assembly."), 
+	table({-border=>1},
+                TR(
+                        td("Data Selection"),
+                        td(popup_menu(-name=>"type",
+                                       -values=>["supercontig", "contig", "isolated contigs"], -labels=>\%types, -default=>"supercontig"))
+                ),
+		TR(
+			td("Minimum Size"),
+			td(textfield({-name=>"min_bases", -default=>$min_bases}))
+		),
+                TR(
+                        td("Maximum Size"),
+                        td(textfield({-name=>"max_bases", -default=>$max_bases}))
+                ),
+		TR(
+			td("Image Width"),
+			td(radio_group(-name=>"width",
+                                       -values=>["640", "800", "1024", "1200", "1400", "1500", "1700", "2000", "3200"], -default=>"800"))
+		),
+                TR(
+                        td("Show Contig Linking Reads"),
+                        td(checkbox_group( -name=>'show_linking',
+                                         -values=>'Y', -default=>['N']) )
+                ),
+		TR(
+                        td("Show Supercontig Linking Reads"),
+                        td(checkbox_group( -name=>'show_link_sc',
+                                         -values=>'Y', -default=>['N']) )
+                ),
+                TR(
+                        td("Show Orientation Error Reads"),
+                        td(checkbox_group( -name=>'show_orienterrors',
+                                         -values=>'Y', -default=>['N']) )
+                ),
+                TR(
+                        td("Show Repeat Regions"),
+                        td(checkbox_group( -name=>'show_repeat',
+                                         -values=>'Y', -default=>['N']) )
+                ),
+                TR(
+                        td("Show Open Reading Frames"),
+                        td(checkbox_group( -name=>'show_orf',
+                                         -values=>'Y', -default=>['N']) )
+                ),
+	);
+
+#                TR(
+#                        td("Show Coverage Graph <i>(slow)</i>"),
+#                        td(checkbox_group( -name=>'show_coverage',
+#                                         -values=>'Y') )
+#                ),
+
+print
+	hidden(-name=>'organism', -value=>$mbl->organism),
+	hidden(-name=>'page', -value=>'assembly_overview'),
+	p,
+	submit,br,
+	'<a href="?page=assembly_overview">[Defaults]</a>',
+	end_form,
+	p,
+	hr;
+
+print "</center>";
+
+if(param('width'))
+{
+
+	my $cgi_params = ';width=' . param('width') . ';type=Contig+3';
+
+	my $type = "supercontig";
+	my $contigs_h;
+	my $total_viewing_contigs;
+	my $total_contigs;
+	my $total_viewing_supercontigs;
+	my $total_superconitgs;
+	my $total_viewing_contig_length;
+	my $total_contig_length;
+	my $type_name;
+
+	if(param('show_linking') eq 'Y')
+	{
+		$cgi_params .= '+ReadPartDiffContigNeg+2+ReadPartDiffContigPos+2';
+	}
+	if(param('show_repeat') eq 'Y' )
+	{
+		$cgi_params .= '+RepeatRegion+2';
+	}
+	if(param('show_coverage') eq 'Y')
+	{
+		$cgi_params .= '+Coverage+2';
+	}
+	if(param('show_link_sc') eq 'Y')
+	{
+		$cgi_params .= '+ReadPartDiffSuper+2';
+	}
+	if(param('show_orf') eq 'Y')
+        {
+                $cgi_params .= '+ORFs+2';
+        }
+        if(param('show_orienterrors') eq 'Y')
+        {
+                $cgi_params .= '+ReadPartDiffContigSameDir+2';
+        }
+
+
+	if(param('type') eq 'contig')
+	{
+		$type = "contig";
+		$type_name = "contig";
+		$contigs_h = $mbl->query('get_contigs_size_list');
+		$contigs_h->execute($min_bases, $max_bases);
+	        $total_viewing_contigs = $contigs_h->rows;
+		my %super_hash;
+		while(my $row = $contigs_h->fetchrow_hashref)
+		{
+	        	$total_viewing_contig_length += $row->{total_length};
+			$super_hash{$row->{super_id}} = 1;
+		}
+		while(my ($key, $val) = each(%super_hash))
+		{
+			$total_viewing_supercontigs++;
+		}
+		$contigs_h->execute($min_bases, $max_bases);
+
+	} else
+	{
+                $type = "supercontig";
+                $type_name = "supercontigs";
+                $total_viewing_contigs;
+                $total_viewing_supercontigs;
+                $total_viewing_contig_length;
+                $total_contig_length;
+
+		if(param('singlet') eq 'Y' || param('type') eq 'isolated contigs')
+		{
+			$contigs_h = $mbl->query('get_supercontigs_size_list_singlet');
+			$contigs_h->execute($min_bases, $max_bases);
+	                $total_viewing_contigs = $contigs_h->rows();
+	                $total_viewing_supercontigs = $contigs_h->rows();
+			while(my $row = $contigs_h->fetchrow_hashref)
+			{
+				$total_viewing_contig_length += $row->{total_length};	
+			}
+			$contigs_h->execute($min_bases, $max_bases);
+		} else
+		{
+			$contigs_h = $mbl->query('get_supercontigs_size_list');
+			$contigs_h->execute($min_bases, $max_bases);
+	                $total_viewing_contigs = $mbl->total_contigs_in_supercontigs_between($min_bases, $max_bases);
+	                $total_viewing_supercontigs = $contigs_h->rows;;
+	                $total_viewing_contig_length = $mbl->total_contig_bases_in_supercontig_between($min_bases, $max_bases);
+		}
+	}
+
+
+
+
+
+	
+	print center(	b(p(
+				"Currently viewing " . $mbl->commify($total_viewing_contigs) . " of " . $mbl->commify($mbl->total_contigs) . " contigs and " . $mbl->commify($total_viewing_supercontigs) . " of " . $mbl->commify($mbl->total_supercontigs) . " supercontigs.",
+				br,
+				"Cumulative contig length (excluding gaps) is " . $mbl->commify($total_viewing_contig_length) . " of " . $mbl->commify($mbl->total_contig_bases) . " bp.",
+				br,
+				"Viewed $type\s are between " . $mbl->commify($min_bases) . " and " . $mbl->commify($max_bases) . " bp in length."
+			),
+			p(
+				ucfirst($type) . "s are sorted from longest to shortest (100 bp minumim gap size enforced)."
+			),
+			p(
+				"Click on individual supercontigs to view details."
+			))
+	);
+
+
+	# Image
+
+	print '<hr><br><center><table>';
+	while(my $row = $contigs_h->fetchrow_hashref)
+	{
+		my $header_text;
+		if($type eq 'contig')
+		{
+			$header_text = "Contig " . $row->{'id'} . ": " . $mbl->commify($row->{total_length}) . " bp";
+		} else
+		{
+			$header_text = "Supercontig " . $row->{'id'} . ": " . $mbl->commify($row->{total_length}) . " bp (" . $mbl->commify($mbl->num_bases_as_gaps_in_supercontig($row->{super_id})) . " bp as gaps) distributed over " .
+                                        $mbl->num_contigs_in_supercontig($row->{id}) . " contigs";
+		}
+		print 	TR(
+				td(
+					center($header_text), br,
+					a( {-href=>$mbl->gbrowse_organism_cgi . "?name=$type\_" . $row->{'id'}},
+						img( {-src=>$mbl->gbrowse_organism_img  . "?name=$type\_" . $row->{'id'} . $cgi_params})
+					),
+					hr()
+				)
+			)
+	}
+	print '</table></center>';
+
+}
+
+[% END %]

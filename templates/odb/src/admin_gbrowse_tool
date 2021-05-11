@@ -1,0 +1,191 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+use File::Temp qw/ tempfile tempdir /;
+
+$CGI::POST_MAX = 1024 * 10000;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('GBrowse Administration Tool');
+
+# Print out a menu of different sage tasks
+print 	table({-cellspacing=>8},
+		TR(
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_gbrowse_admin_action=create_gff"}, "Create GFF")),
+			
+		)
+	),p;
+
+if(param('gmoddb_gbrowse_admin_action') eq 'create_gff')
+{
+
+	if(param('gmoddb_create_gff') eq 'Create GFF Files')
+	{
+		# Create temporary configuration file
+		my ($conf_fh, $conf_fn) = tempfile();
+		print $conf_fh "organism=" . $mbl->organism . "\n";
+		if(param('gmoddb_min_gaps') eq 'ON')
+		{
+			print $conf_fh "minimum_gap_fg = 1\n";
+		}
+		if(param('gmoddb_overlap_bases'))
+		{
+			my ($over_num) = param('gmoddb_overlap_bases') =~ /(\d+)/;
+			if($over_num =~ /\d+/)
+			{
+				print $conf_fh "minimum_gap_length = $over_num\n";
+			} else
+			{
+				print $conf_fh "minimum_gap_length = 100\n";
+			}
+		}
+		if(param('gmoddb_is_bacterial') eq 'ON')
+		{
+			print $conf_fh "is_bacterial=1";
+		} else
+		{
+			print $conf_fh "is_bacterial=0";
+		}
+		close($conf_fh);
+
+		my ($run_fh, $run_fn) = tempfile();
+		my @gff_list = param('gmoddb_gff_file_list');
+
+		print $run_fh	"create_directories = 1\n";
+		if(scalar @gff_list > 0)
+		{
+			foreach my $command (@gff_list)
+			{
+				if($command eq 'fasta_file')
+				{
+					print $run_fh "create_modified_fasta = 1\n";
+				} elsif($command eq 'reads')
+				{
+					print $run_fh "create_read_gff = 1\n";
+				} elsif($command eq 'repeats')
+				{
+					print $run_fh "find_repeat = 1\n";
+				} elsif($command eq 'trna')
+				{
+					print $run_fh "find_trna = 1\n";
+				} elsif($command eq 'coverage')
+				{
+					print $run_fh "calculate_coverage = 1\n";
+				} elsif($command eq 'quality')
+				{
+					print $run_fh "create_quality_gff = 1\n";
+				} elsif($command eq 'intergenomic_matches')
+				{
+					print $run_fh "calculate_matches_nucmer = 1\n";
+				} elsif($command eq 'orfs')
+				{
+					print $run_fh "create_supercontig_orf_from_db = 1\n";
+				} elsif($command eq 'transcript')
+				{
+					print $run_fh "create_transcript_gff = 1\n";
+				} elsif($command eq 'domains')
+				{
+					print $run_fh "create_domains_from_db = 1\n";
+				} elsif($command eq 'intergenic_blast')
+				{
+					print $run_fh "create_intergenic_blast_from_db = 1\n";
+				} elsif($command eq 'sage')
+				{
+					print $run_fh "create_sage_from_db = 1\n";
+				}
+			}
+		}
+				
+		if( param('gmoddb_load_gbrowse') eq 'ON')
+		{
+			# Create the gbrowse database and set
+			print $run_fh 	"create_gbrowse_database = 1\n" .
+					"load_db = 1\n";
+		}
+		if( param('gmoddb_create_gbrowse_conf') eq 'ON')
+		{
+			print $run_fh "create_web_files = 1\n";
+		}
+		close($run_fh);
+		my $mblpipe_run = $mbl->mblpipe_dir . "/mblpipe --configuration=$conf_fn --runfile=$run_fn&";
+		system($mblpipe_run);
+		print $mblpipe_run;
+	} 
+	print 	h2("Create GFF"),
+		start_multipart_form({-method=>'POST'}),
+	 	table( {-border=>1},
+			TR(
+				td("Enforce Minimum Gaps"),
+				td(checkbox(-name=>'gmoddb_min_gaps', -checked=>1, -value=>'ON', -label=>'') )
+			),
+			TR(
+				td("Gap to set between overlapping Contigs"),
+				td(textfield(-name=>'gmoddb_overlap_bases', -value=>'100') )
+			),
+			TR(
+				td("Bacterial Organism"),
+				td(checkbox(-name=>'gmoddb_is_bacterial', -checked=>0, -value=>'ON', -label=>'') )
+			),
+			TR(
+				td("Create GBrowse GFF Files"),
+				td(
+#					checkbox(-name=>'gmoddb_create_gff_files', -checked=>0, -value=>'ON', -label=>''),
+					checkbox_group(-name=>'gmoddb_gff_file_list', -values=>['fasta_file', 'reads', 'repeats', 'trna', 'sage', 'coverage', 'quality', 'intergenomic_matches', 'orfs', 'transcript', 'domains', 'intergenic_blast'], -cols=>1 )
+				)
+			),
+			TR(
+				td("Load GBrowse Database"),
+				td(checkbox(-name=>'gmoddb_load_gbrowse', -checked=>1, -value=>'ON', -label=>'') )
+			),
+			TR(
+				td("Create GBrowse Configuration File"),
+				td(checkbox(-name=>'gmoddb_create_gbrowse_conf', -checked=>0, -value=>'ON', -label=>'') )
+			),
+		),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		hidden(-name=>'gmoddb_gbrowse_admin_action', -value=>'create_gff'),
+		submit(-name=>'gmoddb_create_gff', -value=>'Create GFF Files'),
+		end_form;
+
+} else
+{
+	print h2("Pick an action in the above menu");
+}
+
+
+untie(%session);
+[% END %]

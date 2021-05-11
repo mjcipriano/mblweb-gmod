@@ -1,0 +1,245 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use File::Temp qw/ tempfile tempdir /;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $id = param('id');
+my $orf = param('orf');
+
+
+my $alignment = $mbl->get_stored_alignment($id);
+my $str = $mbl->create_alignment_string($alignment, 'clustalw');
+
+if(param('type') eq 'jalview')
+{
+		# we must first create a temporary file
+                my ($fh, $filename) = tempfile( TEMPLATE => 'tempXXXXX',
+                        DIR => $mbl->gmodweb_html_tmp_sys_dir,
+                        SUFFIX => '.dat');
+                my ($wsfh, $wsfilename) = tempfile( TEMPLATE => 'tempXXXXX',
+                        DIR => $mbl->gmodweb_html_tmp_sys_dir,
+                        SUFFIX => '.jnlp');
+                print $fh $str; 
+
+        my @datfilename = split('/',$filename);
+        my $datlen = scalar @datfilename;
+        my $datfilename = $datfilename[$datlen-1];
+
+        my @webstartfilename = split('/',$wsfilename);
+        my $webstartlen = scalar @webstartfilename;
+        my $webstart = $webstartfilename[$webstartlen-1];
+
+
+print $wsfh '<?xml version="1.0" encoding="utf-8"?>
+<jnlp spec="1.0+"
+      codebase="http://ccgb.umn.edu/software/java"
+      href="';
+print $wsfh 'http://' . $mbl->organism_web_server . $mbl->gmodweb_html_tmp_web_dir . '/' . $webstart;
+print $wsfh '">
+  <information>
+    <title>Jalview Application</title>
+    <vendor>Computational Biology Center, University of Minnesota</vendor>
+    <homepage href="http://circinus.ebi.ac.uk:6543/jalview/contents.html"/>
+    <description>Jalview </description>
+    <description kind="short">Multiple alignments of Protein sequences.</description>
+    <icon href="../Images/hydconssm.gif"/>
+  </information>
+  <security> 
+    <all-permissions/> 
+  </security> 
+  <resources>
+    <j2se version="1.4+"/>
+    <j2se version="1.3+"/>
+    <j2se version="1.2+"/>
+    <jar href="lib/jalview.jar"/>
+    <property name="jalview.alignment" value="jalview/INTRLEUKIN.aln"/>
+  </resources>
+  <application-desc main-class="jalview.AlignFrame">
+    <argument>';
+
+print $wsfh 'http://' . $mbl->organism_web_server . $mbl->gmodweb_html_tmp_web_dir . '/' . $datfilename;
+
+print $wsfh '</argument>
+    <argument>URL</argument>
+    <argument>CLUSTAL</argument>
+  </application-desc> 
+</jnlp>
+';
+        print header();
+        print '<head><meta http-equiv="REFRESH" content="1; URL=' . $mbl->gmodweb_html_tmp_web_dir . '/' . $webstart . '"></head>';
+        print start_html();
+        print "Loading Java Web Start";
+        print end_html();
+
+} elsif ((param('type') =~ /_aln/) || (param('type') =~ /_tree/)) {
+
+	my $aln_string;
+	my $filename = $orf;
+	if (param('type') =~ /nexus_aln/) 
+	{
+		$aln_string = $mbl->create_alignment_string($alignment, 'nexus');
+		$aln_string =~ s/\'//g;
+		$aln_string .=  $mbl->get_stored_alignment_annotation($id);
+		$filename .= ".nxs";
+		my $tree_string;
+		my $tree_id = $mbl->get_stored_tree_id_from_ma_id($id);
+		my $tree = $mbl->get_stored_tree_string($tree_id);
+		if (defined $tree) {
+			my @nodes = split /:/, $tree;
+			foreach my $n (@nodes) {
+				my $n_init = $n;
+				my $n_name = $n;
+				$n_init =~ s/(^.*[\(,]).*$/$1/;
+				$n_name =~ s/^.*[\(,]//;
+				$n_name =~ s/([0-9A-Za-z])_.*(_[A-Za-z]+$)/$1$2/;
+				$tree_string .= $n_init;
+				if ($n_name ne $n_init) { #didn't find a node label, must be other values
+					$tree_string .= $n_name;
+				}
+				$tree_string .= ":";
+			}
+			$tree_string =~ s/:$//;
+			my $tree_string = "begin trees;\n\ttree $id = " . $tree_string . "\nend;\n";
+			$aln_string .= $tree_string;
+		} 
+	} elsif (param('type') eq 'gde_aln') {  #Create a flatfile format for import
+		$filename .= ".txt";
+		foreach my $seq ($alignment->each_seq()) {
+			my $seq_name = $seq->id();
+			$seq_name =~ s/\s+/_/g;
+			$aln_string .= "%$seq_name\n" . $seq->seq() . "\n";
+		}
+		my $annotation = $mbl->get_stored_alignment_annotation($id);
+		if ($annotation ne "") {
+			my $mask;
+			my $exclude;
+			my %mask_hash;
+			my @annotation_lines = split /\n/, $annotation;
+			foreach my $maskline (@annotation_lines) {
+				if ($maskline =~ /CHARSET/) {
+					$exclude = $maskline;
+					$exclude =~ s/.*CHARSET MASK = //ig;
+					$exclude =~ s/\;//;
+				} elsif ($maskline =~ /Exclude\s+[0-9]+/) {
+					$exclude = $maskline;
+					$exclude =~ s/\s+Exclude\s+//g;
+					$exclude =~ s/\;//g;
+				}
+			}
+			my $len = $alignment->length();
+			my $test = "in";
+
+			my @exclude_ranges = split ' ', $exclude;
+			foreach my $e (@exclude_ranges) {
+				my @ends = split /-/, $e;
+				$mask_hash{$ends[0]} = "out";
+				$mask_hash{(1 + $ends[1])} = "in";
+			}
+			$mask = "\@Mask_Sequence\n";
+			for (my $i=1; $i<=$len; $i++) {
+				if (defined $mask_hash{$i}) { $test = $mask_hash{$i}; }
+				if ($test eq "in") {
+					$mask .= "1";
+				} else {
+					$mask .= "0";
+				}
+			}
+			$aln_string .= $mask . "\n";
+		}
+	} elsif (param('type') =~ /_aln/) { #all other bioperl AlignIO formats
+		my $format = param('type');
+		$format =~ s/_aln//;
+		my $ext;
+		if ($format eq "clustalw") {
+			$ext = ".aln";
+		} elsif ($format eq "fasta") {
+			$ext = ".fa";
+		} elsif ($format eq "mega") {
+			$ext = ".mega";
+		} elsif ($format eq "msf") {
+			$ext = ".msf";
+		} elsif ($format eq "pfam") {
+			$ext = ".pfam";
+		} elsif ($format eq "phylip") {
+			$ext = ".phy";
+		} elsif ($format eq "psi") {
+			$ext = ".psi";
+		} elsif ($format eq "selex") {
+			$ext = ".slx";
+		} else {
+			$ext = ".aln";
+		}
+
+		$aln_string = $mbl->create_alignment_string($alignment, $format);
+		$filename .= $ext;
+	} elsif (param('type') eq 'nexus_tree') {
+		$filename .= "_tree.nxs";
+		my $tree_id = $mbl->get_stored_tree_id_from_ma_id($id);
+		my $tree = $mbl->get_stored_tree_string($tree_id);
+		$aln_string = "#NEXUS\n\n[ID: None Available]\nbegin trees;\n";
+		$aln_string .= "tree $id = " . $tree;
+		$aln_string .= "end;\n";
+	} 
+
+	print header( {
+		-content_type=>'application/txt; name="' . $filename . '"', 
+		-content_disposition=>'attachment; filename=' . $filename,
+		-content_transfer_encoding=>'binary'}
+	);
+	print $aln_string;
+
+} elsif (param('type') eq 'atv') {  #open ATVapplet.jar
+
+	print header();
+	print '<CENTER><B>';
+	print 'Please do not close this window<BR>as long as you want to use ATV.<br>';
+	print '<APPLET ARCHIVE = "/ATVapplet.jar"';
+	#print '<APPLET ARCHIVE = "/bioware/linux/RIO1.1/java/ATVapplet.jar"';
+ 	print ' CODEBASE="/"';
+ 	print ' CODE = "forester.atv_awt.ATVapplet.class"';
+ 	print ' WIDTH = 200 HEIGHT = 50';
+	print ' <PARAM NAME = url_of_tree_to_load';
+	my $tree_id = $mbl->get_stored_tree_id_from_ma_id($id);
+	print ' VALUE = ' . $mbl->stored_tree_link($tree_id) . ' >';
+	print ' </APPLET>';
+	print ' </BODY></HTML>';
+
+} else {
+	print '<form action"' . $mbl->site_cgi . '">',
+		'<INPUT type="hidden" name="organism" value=' . $mbl->organism . '>',
+		'<INPUT type="hidden" name="orf" value=' . $orf . '>',
+		'<INPUT type="hidden" name="page" value="ma">',
+		'<INPUT type="hidden" name="noheader" value="T">',
+		'<INPUT type="hidden" name="id" value=' . $id . '>';
+	print 'Options: <select name="type"> 
+			<option value="atv">atv - open consensus tree with atv applet</option>
+			<option selected="selected" value="clustalw_aln">ClustalW-format alignment file</option>
+			<option value="fasta_aln">fasta-format alignment file</option>
+			<option value="gde_aln">GDE-format alignment file, with mask</option>
+			<option value="jalview">jalview - open unmasked aligment with jalview applet</option>
+			<option value="mega_aln">mega-format alignment file</option>
+			<option value="msf_aln">msf-format (GCG) alignment file</option>
+			<option value="nexus_aln">nexus-format alignment file, with mask and trees, unannotated names</option>
+			<option value="nexus_tree">nexus-format consensus tree file with annotated names</option>
+			<option value="pfam_aln">pfam-format alignment file</option>
+			<option value="phylip_aln">phylip-format alignment file</option>
+			<option value="psi_aln">psi-format alignment file</option>
+			<option value="selex_aln">selex-format alignment file</option>
+			</select>
+			<input type="submit" name="submit" value="Download" />';
+	print '</form>';
+
+		
+	print "<p>--------------------------<br>";
+	print "<pre>" . $str . "</pre>";
+}
+
+[% END %]

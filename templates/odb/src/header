@@ -1,0 +1,20 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<link rel="stylesheet" type="text/css" href="/gbrowse/gbrowse.css">
+<head>
+<title>
+[% text_title %]
+</title>
+<LINK REL="SHORTCUT ICON" HREF="http://gmod.mbl.edu/favicon.ico">
+<script type="text/javascript" src="/javascript/overlib.js"></script>
+</head>
+
+<body>
+<div id="overDiv" style="position:absolute; visibility:hidden; z-index:1000; width:'250px'"></div>
+<table class="searchtitle" border=0 width="100%">
+        <tr>
+                <td width="70%"> <small>[% INCLUDE menu %]</small></td>
+                <td align=right><b>Assembly Data: [% database_version %]</b></td>
+        </tr>
+</table>
+ 
+<br>

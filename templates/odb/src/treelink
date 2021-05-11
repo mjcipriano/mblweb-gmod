@@ -1,0 +1,16 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $id = param('id');
+print $mbl->stored_tree_link($id);
+
+[% END %]

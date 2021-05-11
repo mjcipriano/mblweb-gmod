@@ -1,0 +1,31 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		<center><p><font size="+3" color="red"><b>Assembly Overview</b></font></p></center>
+		</td>
+	</tr>
+</table>
+
+<br>
+
+<table border="0" width=100%>	
+	<tr>
+		<td valign="top">
+[% INCLUDE assemblyanalysis_tool %]
+		</td>
+	</tr>
+
+</table>
+
+<hr>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

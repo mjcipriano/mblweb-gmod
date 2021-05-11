@@ -1,0 +1,87 @@
+[% PERL %]
+ 
+use Mbl;
+use Apache::Session::File;
+use Apache;
+use CGI qw(:all);
+use CGI::Pretty;
+use File::Temp qw/ tempfile tempdir /;
+use DBI;
+                                                                                                                            
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+                LockDirectory   => $mbl->session_lock_dir
+        };
+
+
+
+my $check_login_h = $mbl->query('check_login');
+my $login_failed = 0;
+if(param('Login'))
+{
+	$check_login_h->execute(param('login_name'), param('login_password'));
+	if($check_login_h->rows > 0)
+	{
+		my $login_row = $check_login_h->fetchrow_hashref;
+		$session{'login_id'} = $login_row->{id};
+		$session{'login_first_name'} = $login_row->{first_name};
+		$session{'login_last_name'} = $login_row->{last_name};
+		$session{'login_user_name'} = $login_row->{user_name};
+		$session{'organism'} = $mbl->organism;
+	} else
+	{
+		print "<b>Login Failed</b><br>";
+		$login_failed = 1;
+		
+	}
+}
+if($login_failed)
+{
+} elsif(param('action') eq 'logout' )
+{
+	#untie(%session);
+	undef $session{'login_id'};
+	undef $session{'login_first_name'};
+	undef $session{'login_last_name'};
+	undef $session{'login_user_name'};
+	undef $session{'login_name'};
+	tied(%session)->delete;
+	
+	print "<b>You have been logged out.</b>";
+}elsif($session{'login_id'} && ($session{'organism'} eq $mbl->organism) )
+{
+	print 	"<b>You are logged in as ", $session{'login_user_name'}, " press ",
+		a( {-href=>$mbl->organism_home . "?page=login&action=logout"}, "here"),
+		" to logout.</b>";
+} else
+{
+	print 	start_form( -action=>$mbl->organism_home , -method=>'POST'),
+		table( {-border=>1},
+			TR(
+				td(b("Login Name")),
+				td(textfield({-name=>"login_name", -default=>$session{'login_user_name'}}),)
+			),
+			TR(
+				td(b("Password")),
+				td(password_field({-name=>"login_password"}))
+			)
+		),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+	        hidden(-name=>'page', -value=>'login'),
+	        p,
+	        submit({-name=>"Login"}),
+	        end_form;
+}
+
+untie(%session);
+
+[% END %]

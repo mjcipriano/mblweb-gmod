@@ -1,0 +1,26 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+</table>
+
+<br>
+[% INCLUDE admin_user_tool %]
+<p>&nbsp;
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

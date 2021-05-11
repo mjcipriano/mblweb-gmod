@@ -1,0 +1,266 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $tdir = '/var/www/templates/odb';
+
+my $dbh = $mbl->dbh;
+my $shared_dbh = $mbl->shared_dbh;
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                   
+     
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+	print "Logged in as " . $session{'login_user_name'} . "<br>\n";
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('Admin Tool for Editing Page Modules');
+
+if(param('new_page_name') ne '' && param('template_name') ne '')
+{
+	my $insert_template_q = 'insert into templates (template_file, page_name) VALUES (?, ?)';
+	my $insert_template_h = $dbh->prepare($insert_template_q);
+
+	$insert_template_h->execute(param('template_name'), param('new_page_name'));
+	param(-name=>'new_page_name', -value=>undef);
+	param(-name=>'template_name', -value=>undef);
+	param(-name=>'page_name', -value=>param('new_page_name'));
+
+
+}
+
+if(param('Delete'))
+{
+	if(param('Confirm') eq "Yes")
+	{
+	
+		my $delete_var_query = 'delete from html where template = ?';
+		my $delete_var_h = $dbh->prepare($delete_var_query);
+		my $delete_template_query = 'delete from templates where page_name = ?';
+		my $delete_template_h = $dbh->prepare($delete_template_query);
+                                                                                                                                                                                                                                                       
+		print h1('Deleting Page ' . param('page_name'));
+	
+		$delete_var_h->execute(param('page_name'));
+		$delete_template_h->execute(param('page_name'));
+	} else
+	{
+		print "Confirm deletion of " . param('page_name');
+		print	start_form( -action=>$mbl->organism_home, -method=>'POST'),
+			submit({-name=>'Confirm', -value=>'Yes'}),
+			submit({-name=>'Confirm', -value=>'No'}),
+			hidden(-name=>'page_name', -value=>param('page_name')),
+                        hidden(-name=>'organism', -value=>$mbl->organism),
+                        hidden(-name=>'page', -value=>'admin_page'),
+                        end_form,		
+	}
+
+}
+
+
+# Get all of the possible pages
+my $page_h = $dbh->prepare('select template_file, page_name from templates order by page_name');
+$page_h->execute();
+my @pages_array;
+my $pages_hash;
+while( my $row = $page_h->fetchrow_hashref)
+{
+	push (@pages_array, $row->{page_name});
+	$pages_hash->{$row->{page_name}} = $row->{template_file};
+}
+
+# Now check the gmoddb list of templates and see if you can add any new pages
+my $gmoddb_page_h = $shared_dbh->prepare('select template_file, page_name from gmodweb_templates order by page_name');
+$gmoddb_page_h->execute();
+my $check_page_h = $dbh->prepare("select count(*) as num from templates where page_name = ?");
+while(my $gmoddb_row = $gmoddb_page_h->fetchrow_hashref)
+{
+	# Check to see if this page is in the pages_hash
+	$check_page_h->execute($gmoddb_row->{page_name});
+	my $num_rows = $check_page_h->fetchrow_hashref->{num};
+	if($num_rows < 1)
+	{
+		print   start_form( -action=>$mbl->organism_home, -method=>'POST'),
+			hidden(-name=>'page_name', -value=>param('page_name')),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>'page', -value=>'admin_page'),
+			'<input type="hidden" name="new_page_name" value="' . $gmoddb_row->{page_name} . '" />',
+			'<input type="hidden" name="template_name" value="' . $gmoddb_row->{template_file} . '" />',
+			submit(-name=>'submit', -value=>"Add " . $gmoddb_row->{page_name}),
+			end_form,
+	}
+}
+
+
+if(param('edit_values') eq 'true')
+{
+                                                                                                                                                                                                                                                       
+	my $update_h = $dbh->prepare("UPDATE html set value = ? where template = ? AND variable = ?");
+
+	my @vals = param();
+	foreach my $name(@vals)
+	{
+		if($name =~ m/^delete_/)
+		{
+			# Delete the variable
+			$name =~ s/^delete_//;
+			my $delete_h = $dbh->prepare('DELETE from html where template = ? AND variable = ?');
+			$delete_h->execute(param('page_name'), $name);
+
+		} elsif($name eq 'new_var_var' || $name eq 'new_var_value')
+		{
+                        # Do nothing
+                } elsif( ($name eq 'page_name') || ($name eq 'edit_values') )
+                {
+                        # Do nothing
+                } else
+                {
+                        $update_h->execute(param($name), param('page_name'), $name);
+                }
+        }
+
+        # Now check if we have a new value to insert
+        if(param('new_var_var') ne '' && param('new_var_value') ne '')
+        {
+                my $insert_h = $dbh->prepare('insert into html (template, variable, value) VALUES (?, ?, ?)');
+                $insert_h->execute( param('page_name'), param('new_var_var'), param('new_var_value'));
+        }
+}
+
+
+# Get an array of templates
+
+print
+        start_form( -action=>$mbl->organism_home, -method=>'POST'),
+	table({-border=>1},
+		TR(
+			td('Edit Existing Page'),
+			td( popup_menu(-name=>"page_name", -values=>\@pages_array) ),
+			td( submit({-name=>'Delete', -value=>'delete_page'}) ) 
+		
+		),
+		TR(
+			td( 'New Page' ),
+			td('Page Name'),
+			td('Template File')
+		),
+		TR(
+			td(' '),
+			td(textfield({-name=>"new_page_name", -default=>''})),
+			td(textfield({-name=>"template_name", -default=>''}))
+		)
+	),
+	p,
+	submit,
+	hidden(-name=>'organism', -value=>$mbl->organism),
+	hidden(-name=>'page', -value=>'admin_page'),
+	end_form,
+	hr;
+
+if(param() && !param('Delete') && !param('Confirm') )
+{
+	param(-name=>'new_var_var', -value=>'');
+	param(-name=>'new_var_value', -value=>'');
+
+	my $var_h = $dbh->prepare("select template, variable, value from html where template = ?");
+	$var_h->execute(param('page_name'));
+
+	# Determine which variables are available
+	my $fileh = $dbh->prepare("select template_file from templates where page_name = ?");
+	$fileh->execute(param('page_name'));
+	if($fileh->rows > 0)
+	{
+		my $filerow = $fileh->fetchrow_hashref;
+		my $filename = $mbl->template_dir . "/src/" . $filerow->{template_file};
+		open(TEMPLATEFILE, $filename);
+		print("Variables displayed on this page:<br>");
+		while(<TEMPLATEFILE>)
+		{
+			if($_ =~ /\[\%(.+)\%\]/)
+			{
+				my $hit = $1;
+				if($hit =~ /INCLUDE/)
+				{
+				} elsif($hit =~ /IF\ /)
+				{
+				} elsif ($hit =~ /END\ /)
+				{
+				} else
+				{
+					print "$hit<br>";
+				}
+			}
+		}
+		
+	}
+
+	if(defined(param('page_name')))
+	{
+
+		print h1('Edit Below for page "' . param('page_name') . '"'),
+		start_form( -action=>$mbl->organism_home, -method=>'POST'),
+		hidden({-name=>"page_name", -default=>param('page_name')}), "\n",
+		hidden({-name=>"edit_values", -default=>"true"}), "\n",
+		'<table border=1>',
+		'<tr><td><b>Variable</b></td><td><b>Value</b></td><td><b>delete</b></td></tr>';
+		while( my $row = $var_h->fetchrow_hashref )
+		{
+			print 	'<tr><td>', 
+				$row->{variable},
+				'</td><td>',
+				textarea({-name=>$row->{variable}, -default=>$row->{value}, -cols=>100, -rows=>10}),
+				'</td>',
+				'<td>',
+				checkbox_group( -name=>'delete_' . $row->{variable}, -values=>'T'),
+				'</td>',
+				'</tr>', "\n";
+		}
+	
+		# Now put an extra box for a new variable to add
+	
+		print 	'<tr><td>',
+			textfield({-name=>"new_var_var", -default=>''}),
+			'</td><td>',
+			textarea({-name=>"new_var_value", -cols=>100, -rows=>10}),
+			'</td>',
+			'</tr>', "\n";
+
+		print 	'</table>', "\n",
+			p,
+			submit,
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>'page', -value=>'admin_page'),
+			end_form,
+			hr;
+	}
+}
+
+untie(%session);
+[% END %]

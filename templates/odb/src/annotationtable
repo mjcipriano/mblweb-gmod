@@ -1,0 +1,154 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+  
+use strict;
+   
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                       
+my %session;
+#%session = %{$mbl->get_session(cookie('SESSION_ID'), \%session)};
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+my $orfid = param('orf');
+if($orfid =~ /^orf\:/)
+{
+        ($orfid) = $orfid =~ /^orf\:(\d+)/;
+} else
+{
+        $orfid = $orfid;
+}
+
+if($mbl->check_orf_existance($orfid))
+{
+	my $annotationadmin_h = $mbl->query('list_annotationadmin');
+	my $annotationuser_h =  $mbl->query('list_annotationuser'); 
+	my $annotation_id_h = $mbl->query('list_annotation_id');
+
+	my $annotation_update_h = $dbh->prepare("UPDATE annotation set annotation = ?, notes = ?, delete_fg = ?, blessed_fg = ?, qualifier = ?, with_from = ?, aspect = ?, object_type = ?, evidence_code = ?, private_fg = ? where id = ?");
+	my $annotation_new_h = $dbh->prepare("INSERT INTO annotation (userid, orfid, annotation, notes, delete_fg, blessed_fg, qualifier, with_from, aspect, object_type, evidence_code, private_fg) VALUES (?, ?, ?, ?, 'N', 'N', ?, ?, ?, ?, ?, ?)");
+	my $check_rights_add_h = $dbh->prepare("select id from user_rights where userid = ? AND rights IN ( 'Add Annotation', 'Annotation Admin')");
+	my $check_rights_edit_h = $dbh->prepare("select id from user_rights where userid = ? AND rights IN ('Annotation Admin')");
+	my $evidence_codes_h = $dbh->prepare("select id, code, description from evidence_codes");
+
+	my $annotation_h;
+
+
+	$check_rights_add_h->execute($session{login_id});
+	my $add_rights = 0;
+	if($check_rights_add_h->rows > 0)
+	{
+		$add_rights = 1;
+	}
+
+	$check_rights_edit_h->execute($session{login_id});
+	my $edit_rights = 0;
+	if($check_rights_edit_h->rows > 0)
+	{
+	        $edit_rights = 1;
+	}
+
+
+	if($edit_rights)
+	{
+		$annotation_h = $annotationadmin_h;
+		$annotation_h->execute($orfid);
+	} else
+	{
+		$annotation_h = $annotationuser_h;
+		if(defined($session{login_id}))
+		{
+			$annotation_h->execute($orfid, $session{login_id});
+		} else
+		{
+			 $annotation_h->execute($orfid,0);
+		}
+	}
+	
+	my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+	
+	print center(h3("Annotation(s)"));
+	print b("Gene Prediction Method: "), $attrib_row->{source}, br;
+	
+
+	if($annotation_h->rows > 0)	
+	{
+		print	br(),
+			"<table border=1 width='95%'>",
+			TR(
+				td( {-width=>'60%'}, b("Annotation")),
+				td(b("Last Updated")),
+				td(center(b("Annotator"))),
+				td(center(b("Deleted"))),
+				td(center(b("Blessed")))
+			);
+				
+		while(my $annotation_row = $annotation_h->fetchrow_hashref)
+		{
+			print 	TR(
+					td( $annotation_row->{annotation} . ' (' . a( {-href=>$mbl->organism_home . "?page=annotation&orf=" . $orfid . "&id=" . $annotation_row->{id}}, "view details") . ')'),
+					td( $annotation_row->{update_dt} ),
+					td( center(a( {href=>"mailto:" . $annotation_row->{email}}, $annotation_row->{user_name}) )),
+					td( center($annotation_row->{delete_fg}) ),
+					td( center($annotation_row->{blessed_fg}))
+			);
+		}
+		
+		print "</table>";
+	} else
+	{
+		print center(b("No Annotation Available"));
+	}
+
+	if($add_rights)
+	{
+		print	'(' . a( { -href=>$mbl->organism_home . "?page=annotation&action=add&orf=" . $orfid}, "add") . ')';
+	}
+	print "<br>";
+
+	# Check for protfun annotations
+
+	my $protfun_result =$mbl->get_protfun_annotation($orfid);
+	
+	if($protfun_result-> rows > 0)
+	{
+		print center(h3("Protfun Annotation")),br;
+		print '<table border=1 width="95%">';
+		print 	TR(
+				td( {-width=>'60%'}, b("Category")),
+				td({-width=>'5%'}, b("Odds"))
+			);
+		while( my $row = $protfun_result->fetchrow_hashref)
+		{
+			print TR(
+				td($row->{description}),
+				td($row->{score})	
+			);
+		}
+		print '</table>';
+	}
+
+
+#	if($mbl->check_annotation_exists( db=>'protfun', sequence_type=>'orf', algorithm=>'protfun') )
+#	{
+#		print "PROTFUN";
+#	}
+
+	print '<p><hr width="90%">';
+} else
+{
+  # Print Nothing
+}	
+untie(%session);
+
+[% END %]

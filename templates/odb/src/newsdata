@@ -1,0 +1,60 @@
+[% PERL %]
+ 
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+ 
+use strict;
+ 
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();
+
+my $news_summary;
+if(param('restrict') eq 'all')
+{
+	$news_summary = $mbl->get_news_result('current');
+} else
+{
+	$news_summary = $mbl->get_news_result('all');
+}
+
+print '<ul>';
+
+my $printed = 0;
+
+while(my $row = $news_summary->fetchrow_hashref)
+{
+	if(param('newsid') eq $row->{id})
+	{
+		my $story = $mbl->get_news_story_hash($row->{id});
+		print  '<li><font size="+1">' . b($row->{news_date}, ': <a href="?page=news&newsid=' . $row->{id} . '"><font size="+1">' , $row->{title} . '</font>') . '</a></font><br>' . $story->{body} . '</li><p>';
+		$printed = 1;
+	} else
+	{
+		print '<li>' . b($row->{news_date}, ': <a href="?page=news&newsid=' . $row->{id} . '">' , $row->{title}) . '</a><br>' . $row->{short_body} . '</li><p>';
+	}
+}
+
+if(!$printed && param('newsid'))
+{
+	my $story = $mbl->get_news_story_hash(param('newsid'));
+	if($story)
+	{
+		print '<li><font size="+1">' . b($story->{news_date}, ': <a href="?page=news&newsid=' . $story->{id} . '"><font size="+1">' , $story->{title} . '</font>') . '</a></font><br>';
+		print  $story->{body} . '</li>';
+	}
+}
+print '</ul><p>';
+
+if(param('restrict') eq 'all')
+{
+	print '[<a href="?page=news&restrict=current">Show Current News Items</a>]';
+} else
+{
+	print '[<a href="?page=news&restrict=all">Show All News Items</a>]';
+}
+
+
+
+[% END %]

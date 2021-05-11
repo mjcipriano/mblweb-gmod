@@ -1,0 +1,58 @@
+[% PERL %]
+ 
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+ 
+use strict;
+ 
+my $mbl = Mbl::new(path_info(), param('organism'));
+ 
+my $dbh = $mbl->dbh();
+ 
+my $session_id = $stash->get('session_id');
+  
+my %session;
+tie %session, "Apache::Session::File", $session_id, {
+	Directory => $mbl->session_tmp_dir
+};
+
+
+if(param('file') eq 'sage')
+{
+	print header( {
+		-content_type=>'application/txt; name="sagedata.txt"',
+		-content_disposition=>'attachment; filename=sagedata.txt',
+		-content_transfer_encoding=>'binary'}
+	);
+
+	my $libs = $mbl->get_sage_access_libraries_array($session{'login_id'});
+	print join("\t", "tagID", "sequence");
+	foreach my $lib (@$libs)
+	{
+		print "\t" . $mbl->get_sage_library_short_name($lib);
+	}
+	print "\n";
+	my $resultsh = $mbl->get_sage_result_list($libs);
+	while(my $row = $resultsh->fetchrow_hashref)
+	{
+		print $row->{tagid} . "\t" . $row->{sequence};
+		foreach my $lib(@$libs)
+		{
+			print "\t" . $row->{$lib};
+		}
+		print "\n";
+	}
+} else
+{
+	my ($filename, $file) = $mbl->get_file(param('file'), param('type'));
+	print header( {
+		-content_type=>'application/txt; name="' . $filename . '"',
+		-content_disposition=>'attachment; filename=' . $filename,
+		-content_transfer_encoding=>'binary'}
+	);
+	print $file;
+}
+
+[% END %]

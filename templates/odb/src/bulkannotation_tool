@@ -1,0 +1,77 @@
+[% PERL %]
+
+use Mbl;   
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+    
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                       
+my %session;
+#%session = %{$mbl->get_session(cookie('SESSION_ID'), \%session)};
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+ 
+
+my $annotation_new_h = $dbh->prepare("INSERT INTO annotation (userid, orfid, aspect, annotation, evidence_code, with_from, qualifier, object_type, private_fg, notes, delete_fg, blessed_fg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'N', 'N')");
+
+my $check_orf_h = $dbh->prepare("SELECT orfid from orfs where orfid = ? AND delete_fg = 'N'");
+
+if($mbl->check_annotation_add_rights($session{login_id}))
+{
+	print 	"Upload file should be a tab delimited file of the following format",br,
+		'ORFID \t ASPECT \t ANNOTATION \t EVIDENCE_CODE \t WITH_FROM \t QUALIFIER \t OBJECT_TYPE \t PRIVATE_FG \t NOTES ',br,
+		"Information on Evidence codes, aspect, qualifier, object_type and with_from can be found ", a( {-href=>"http://www.geneontology.org/GO.annotation.html"}, "here"), ".", br, br,
+		"ASPECT:  one of P (biological process), F (molecular function) or C (cellular component)", br,
+		"OBJECT_TYPE:  one of gene, transcript, protein, protein_structure, complex", br,
+		"WITH_FROM: DB:ACCESSION | DB:ACCESSION | DB:ACCESSION | ...", br,
+		"QUALIFIER: one of NOT, contributes_to, or empty", br,
+		"PRIVATE_FG: one of Y or N", br,br;
+
+	print 	start_multipart_form( -action=>$mbl->organism_home, -method=>'POST'),
+		filefield( -name=>'annotation_file' ),
+		hidden(-name=>'page', -value=>'annotation'),
+		submit({-value=>'upload', -name=>'submit'}),
+		end_form;
+} else
+{
+	print "<h2>You do not have access for bulk upload of annotation or you are not logged in</h2>";
+}
+
+if(param('submit') eq 'upload')
+{
+	print "Processing uploaded file<br>";
+	my $fh = upload('annotation_file');
+	if($fh)
+	{
+		while(<$fh>)
+		{
+			chomp($_);
+			my @line = split("\t", $_);
+			my $fields = scalar @line;
+			if($mbl->check_orf_existance($line[0]))
+			{
+				print "Inserting annotation for ORF " . $line[0],br;
+				$annotation_new_h->execute($session{login_id}, $line[0], $line[1], $line[2], $mbl->get_evidence_code_id($line[3]), $line[4], $line[5], $line[6], $line[7], $line[8]);
+			} else
+			{
+				print "ERROR, ORF " . $line[0] . " not a valid ORFID", br;
+			}
+		}
+		print "DONE<br>";
+	} else
+	{
+		print "Invalid File";
+	}
+
+}
+untie(%session);
+
+[% END %]

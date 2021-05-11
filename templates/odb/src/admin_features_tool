@@ -1,0 +1,610 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+use File::Temp qw/ tempfile tempdir /;
+use Net::SSH::Perl;
+
+
+$CGI::POST_MAX = 1024 * 10000;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('Feature Administration Tool');
+
+# Print out a menu of different tasks
+print 	table({-cellspacing=>8},
+		TR(
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_feature_admin_action=orf"}, "Call ORFs")),
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_feature_admin_action=searches"}, "Searches")),
+		)
+	),p;
+
+
+if(param('gmoddb_feature_admin_action') eq 'orf')
+{
+
+	# If we are extracting orfs
+	if(param('gmoddb_orf_extract'))
+	{
+		my ($train_fh, $train_fn) = tempfile();
+		my $get_train_bin = $mbl->mblpipe_dir . "/scripts/get_training_set.pl";	
+		my $upload_file = upload('gmoddb_orf_training_upload_file');
+
+		# If we have provided an upload training file
+		if($upload_file)
+		{
+			my ($upload_fh, $upload_fn) = tempfile();
+			print "Using uploaded training set<br>";
+
+			# If the upload file is not orfs, but raw information, first extract long orf like sequences from this uploaded file, otherwise
+			# use the  file as provided
+
+			if(!defined(param('gmoddb_orf_training_file_extract')))
+			{
+				while(<$upload_file>)
+				{
+					print $train_fh $_;
+				}
+			} else
+			{
+				while(<$upload_file>)
+				{
+					print $upload_fh $_;
+				}
+			}
+
+			# Extract orf like sequences to use as a training set
+			if(param('gmoddb_orf_training_file_extract') eq '1')
+			{
+				print "Using Uploaded file to find Open Reading Frames to use as training set<br>";
+				system($get_train_bin . " --file=$upload_fn --output=$train_fn");
+			} 
+
+		} elsif(param('gmoddb_orf_training_extract_from_assembly') eq '1')
+		{
+			print "Extracting training set from Assembly<br>";
+			system($get_train_bin . " --organism=" . $mbl->organism . " --output=$train_fn > /tmp/aa");
+		}
+
+		# Check configuration paramaters
+		my ($orf_min_size) = param('gmoddb_orf_min_size') =~ /(\d+)/;
+		my ($orf_max_size) = param('gmoddb_orf_max_size') =~ /(\d+)/;
+		my ($orf_remove_nostart) = param('gmoddb_orf_remove_nostart') =~ /(\d+)/;
+		my ($orf_remove_nostop) = param('gmoddb_orf_remove_nostop') =~ /(\d+)/;
+		my ($orf_is_bacterial) = param('gmoddb_orf_is_bacterial') =~ /(\d+)/;
+		my ($orf_remove_existing) = param('gmoddb_orf_remove_existing') =~ /(\d+)/;
+
+		# Set defaults if a paramater is not defined
+		if(!$orf_min_size)
+		{
+			$orf_min_size = 100;
+		}
+		if(!$orf_max_size)
+		{
+			$orf_max_size = 25000;
+		}
+		if(!$orf_remove_nostart)
+		{
+			$orf_remove_nostart = "0";
+		}
+		if(!$orf_remove_nostop)
+		{
+			$orf_remove_nostop = "0";
+		}
+		if(!$orf_is_bacterial)
+		{
+			$orf_is_bacterial = "0";
+		}
+		if(!$orf_remove_existing)
+		{
+			$orf_remove_existing = 0;
+		}
+		
+		print "Minimum ORF Size: $orf_min_size<br>";
+		print "Maximum ORF Size: $orf_max_size<br>";
+		print "Remove No Start: $orf_remove_nostart<br>";
+		print "Remove No Stop: $orf_remove_nostop<br>";
+		print "Remove Existing: $orf_remove_existing<br>";
+
+		# Create temporary configuration file
+		my ($conf_fh, $conf_fn) = tempfile();
+		print $conf_fh "organism=" . $mbl->organism . "\n";
+		print $conf_fh "orf_training_set=$train_fn\n";
+		print $conf_fh "minimum_orf_length=$orf_min_size\n";
+		print $conf_fh "maximum_orf_length=$orf_max_size\n";
+		print $conf_fh "remove_orf_false_start=$orf_remove_nostart\n";
+		print $conf_fh "remove_orf_no_stop=$orf_remove_nostop\n";
+		print $conf_fh "is_bacterial=$orf_is_bacterial\n";
+
+		close($conf_fh);
+
+		# Create temporary run file
+		my ($run_fh, $run_fn) = tempfile();
+		print $run_fh 	"find_orfs_glimmer = 1\n";
+		close($run_fh);
+
+		print "<br><b>Training File Accepted.</b>";
+		# Remove the orfs if requested
+		if($orf_remove_existing)
+		{
+			# Remove the orfs, the annotation to the orfs, the blast_results, the blast_reports, the tree's and ma's, the orftosage mapping, 
+			$dbh->do("delete from orfs");
+			$dbh->do("delete from annotation");
+			my $sequence_type_id = $mbl->get_sequence_type_id("orf");
+			$dbh->do("delete from blast_results where sequence_type_id = $sequence_type_id");
+			$dbh->do("delete from blast_report_full where sequence_type_id = $sequence_type_id");
+			$dbh->do("delete from ma");
+			$dbh->do("delete from tree");
+			$dbh->do("delete from orftosage");
+			$dbh->do("delete from sage_temp");
+		}
+		# Run the pipeline for calling ORFs
+		my $mblpipe_run = $mbl->mblpipe_dir . "/mblpipe --configuration=$conf_fn --runfile=$run_fn --cleanup=1&";
+		system($mblpipe_run);
+	} 
+
+	print 	h2("Annotate Open Reading Frames"),
+		start_multipart_form({-method=>'POST'}),
+	 	table(
+			TR(
+				td("Upload Training File:"), 
+				td(filefield(-name=>'gmoddb_orf_training_upload_file'), " Extract long orfs from file ", checkbox(-name=>"gmoddb_orf_training_file_extract", -value=>'1', checked=>0, -label=>"" ) )
+			),
+			TR(
+				td(" or Extract Training File from Assembly:"), 
+				td( checkbox(-name=>"gmoddb_orf_training_extract_from_assembly", -value=>'1', checked=>0, -label=>"" ) . "<br>")
+			),
+			TR(
+				td( "Minimum Length" ), td(textfield(-name=>"gmoddb_orf_min_size", -value=>100 ) )
+			),
+			TR(
+				td( "Maximum Length" ), td(textfield(-name=>"gmoddb_orf_max_size", -value=>25000 ) )
+			),
+			TR(
+				td( "Remove Alternate/False Starts" ), td(checkbox(-name=>"gmoddb_orf_remove_nostart", -value=>'1', checked=>1, -label=>"" ) )
+			),
+			TR(
+				td( "Remove No Stop Codon" ), td(checkbox(-name=>"gmoddb_orf_remove_nostop", -value=>'1', checked=>1, -label=>"" ) )
+			),
+			TR(
+				td( "Bacterial Organism" ), td(checkbox(-name=>"gmoddb_orf_is_bacterial", -value=>'1', checked=>0, -label=>"" ) )
+			),
+			TR(
+				td( "Remove Existing Orfs" ), td(checkbox(-name=>"gmoddb_orf_remove_existing", -value=>'1', checked=>0, -label=>"" ), " ", i("Warning, this will remove all orfs, annotations, search results, sage to orf mapping, tree's and alignments") )
+			),
+		),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		hidden(-name=>'gmoddb_feature_admin_action', -value=>'orf'),
+		submit(-name=>'gmoddb_orf_extract', -value=>'Extract Orfs'),
+		end_form;
+
+}elsif(param('gmoddb_feature_admin_action') eq 'searches')
+{
+	if(param('gmoddb_search') eq 'Start Searches')
+	{
+		if(param('gmoddb_search_delete_queue') eq 'ON')
+		{
+			print "Deleting Search Queue", br;
+			$dbh->do("delete from sequence_search");
+			$dbh->do("delete from current_search");
+		}
+		print "Start Searches",br;
+		my @orf_blastp = param('orf_blastp');
+		print b("ORF blastp:");
+		foreach my $val(@orf_blastp)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastp');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orf');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select orfid, $sequence_type_id, $db_id, $algorithm_id, sequence, 'Y' from orfs where delete_fg = 'N'");
+				
+			}
+		}
+		print br;
+		my @orf_blastn = param('orf_blastn');
+		print b("ORF blastn:");
+		foreach my $val(@orf_blastn)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastn');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orf');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select orfid, $sequence_type_id, $db_id, $algorithm_id, sequence, 'N' from orfs where delete_fg = 'N'");
+				
+			}
+		}
+		print br;
+		my @orf_other = param('orf_other');
+		print b("ORF other:");
+		foreach my $val(@orf_other)
+		{
+			print $val . " ";
+		}
+		print br;
+		my @intergenic_blastx = param('intergenic_blastx');
+		print b("Intergenic Space blastx:");
+		foreach my $val(@intergenic_blastx)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastx');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orfspace');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select orfid, $sequence_type_id, $db_id, $algorithm_id, sequence, 'Y' from orfs where delete_fg = 'N'");
+				
+			}
+		}
+		print br;
+		my @intergenic_blastn = param('intergenic_blastn');
+		print b("Intergenic Space blastn:");
+		foreach my $val(@intergenic_blastn)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastp');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orf');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				my ($min) = param('gmoddb_search_intergenic_min') =~ /(\d+)/;
+				my ($max) = param('gmoddb_search_intergenic_max') =~ /(\d+)/;
+				if(!defined($min))
+				{
+					$min = 10;
+				}
+				if(!defined($max))
+				{
+					$max = 40000;
+				}
+				# Find intergenic spaces
+				my $find_blank_orfs = 1;
+				my $contigseqh = $dbh->prepare("select contig_number, substring(bases, ?, ?) as seq from contigs where contig_number = ?");
+			        my $insert_search_h = $dbh->prepare('insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) VALUES (?, ?, ?, ?, ?, ?)');
+			        my $contigh = $dbh->prepare("select distinct contig_number, contig_length from links order by contig_number");
+			        $contigh->execute();
+                                                                                                                                                                                                                                                     
+			        while(my $contighash = $contigh->fetchrow_hashref)
+				{
+					 #  use an array to determine what parts of the contig are covered
+			                my @coverage_array;
+			                # initialize the array
+			                for(1..$contighash->{contig_length})
+			                {
+			                        $coverage_array[$_] = 0;
+			                }
+			                my $orfh = $dbh->prepare("select start, stop, direction, delete_fg, delete_reason from orfs where delete_fg = 'N' and contig = 'contig_" . $contighash->{contig_number} . "'");
+			                $orfh->execute();
+			                while(my $orfhash = $orfh->fetchrow_hashref)
+			                {
+			                        my $start = $orfhash->{start};
+			                        my $stop = $orfhash->{stop};
+			                        for($start..$stop)
+			                        {
+			                                $coverage_array[$_] = 1;
+			                        }
+
+			                }
+			                # At this point all of coverage array has a 0 or a 1, 1 indicating there is an orf at that location
+			                # Now find all streches of 0's that are larger then $min bp's
+			                my $temp_start = 0;
+			                my $temp_stop = 0;
+			                for(1..$contighash->{contig_length})
+			                {
+			                        if($coverage_array[$_] == 0)
+			                        {
+			                                if($temp_start == 0)
+			                                {
+			                                        $temp_start = $_;
+			                                        $temp_stop = $_;
+			                                } else
+			                                {
+			                                        $temp_stop = $_;
+			                                }
+			                        } else
+			                        {
+			                                # This is an area of coverage
+			                                if($temp_start != 0)
+			                                {
+			                                        # This is the end of an area of no coverage
+			                                        # Check if the portion of no coverage is at least $min bp's, and if it is,
+			                                        if( ($temp_stop - $temp_start) > $min && ($temp_stop - $temp_start) < $max)
+			                                        {
+			                                                $contigseqh->execute($temp_start, $temp_stop - $temp_start, 'contig_' . $contighash->{contig_number});
+			                                                my $sequence_hash = $contigseqh->fetchrow_hashref;
+			                                                $insert_search_h->execute("contig_" . $contighash->{contig_number} . "_" . $temp_start . "_" . $temp_stop, $sequence_type_id, $db_id, $algorithm_id, $sequence_hash->{seq}, 'N');
+			                                                $temp_start = 0;
+			                                                $temp_stop = 0;
+			                                        }
+			                                        $temp_start = $_;
+			                                        $temp_stop = $_;
+			                                }
+			                        }
+					}
+				}
+			}
+		}
+		print br;
+		my @contig_blastx = param('contig_blastx');
+		print b("Contig blastx:");
+		foreach my $val(@contig_blastx)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastx');
+			my $sequence_type_id = $mbl->get_sequence_type_id('contig');
+			my ($contig_min) = param('gmoddb_search_contig_min') =~ /(\d+)/;
+			my ($contig_max) = param('gmoddb_search_contig_max') =~ /(\d+)/;
+			if(!defined($contig_min))
+			{
+				$contig_min = 100;
+			}
+			if(!defined($contig_max))
+			{
+				$contig_max = 7000;
+			}
+
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select contig_number, $sequence_type_id, $db_id, $algorithm_id, bases, 'N' from contigs where length(bases) between $contig_min AND $contig_max");
+				
+			}
+		}
+		print br;
+		my @contig_blastn = param('contig_blastn');
+		print b("Contig blastn:");
+		foreach my $val(@contig_blastn)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastn');
+			my $sequence_type_id = $mbl->get_sequence_type_id('contig');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select contig_number, $sequence_type_id, $db_id, $algorithm_id, bases, 'N' from contigs");
+				
+			}
+		}
+		print br;
+		my @contigslice_blastx = param('contigslice_blastx');
+		print b("Contig Slice blastx:");
+		foreach my $val(@contigslice_blastx)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastp');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orf');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select orfid, $sequence_type_id, $db_id, $algorithm_id, sequence, 'Y' from orfs where delete_fg = 'N'");
+				
+			}
+		}
+		print br;
+		my @contigslice_blastn = param('contigslice_blastn');
+		print b("Contig Slice blastn:");
+		foreach my $val(@contigslice_blastn)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastp');
+			my $sequence_type_id = $mbl->get_sequence_type_id('orf');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select orfid, $sequence_type_id, $db_id, $algorithm_id, sequence, 'Y' from orfs where delete_fg = 'N'");
+				
+			}
+		}
+		print br;
+		my @sage_blastn = param('sage_blastn');
+		print b("SAGE blastn:");
+		foreach my $val(@sage_blastn)
+		{
+			print $val . " ";
+			my $db_id = $mbl->get_db_id($val);
+			my $algorithm_id = $mbl->get_algorithm_id('blastn');
+			my $sequence_type_id = $mbl->get_sequence_type_id('sagetag');
+			if(!$db_id || !$algorithm_id || !$sequence_type_id)
+			{
+				print "Not Found! "
+			} else
+			{
+				# Check if there is a minimum tag count
+				my ($min_count) = param('gmoddb_search_sage_min') =~ /(\d+)/;
+				if(!defined($min_count))
+				{
+					$min_count = 1;
+				}
+				# Insert this into the sequence search table
+				$dbh->do("insert into sequence_search (idname, sequence_type_id, db_id, algorithm_id, sequence, translate) select distinct sage_tags.tagid, $sequence_type_id, $db_id, $algorithm_id, sage_tags.sequence, 'N' from sage_tags, sage_results where sage_results.tagid = sage_tags.tagid AND sage_results.result >= $min_count");
+				
+			}
+		}
+		print br;
+
+		# If you want to start the cluster jobs for searching
+		if(param('gmoddb_search_start_cluster') eq 'ON')
+		{
+			print "Starting Jobs on cluster";
+			my ($num_jobs) = param('gmoddb_search_num_start_cluster') =~ /(\d+)/;
+			if(!defined($num_jobs))
+			{
+				$num_jobs = 5;
+			}
+			my $ssh = Net::SSH::Perl->new("cluster3.mbl.edu");
+			$ssh->login("testuser", "testpass");
+			for(1..$num_jobs)
+			{
+				$ssh->cmd("qsub " . $mbl->mblpipe_dir . "/scripts/cluster/submit_generic.sh " . $mbl->organism);
+				sleep 1;
+				
+			}
+		}
+	}
+	print 	start_form({-method=>'POST'}),
+		table({border=>1},
+			TR(
+				th("ORFs"), th("Intergenic Space"), th("Contigs"), th("Contig Slice"), th("Sage Tags")
+			),
+			TR(
+				td(     # ORF Searches
+					{-valign=>'top'},
+					table({border=>1},
+						TR(
+							td({-valign=>'top'}, b("blastp")),
+							td(checkbox_group(-name=>'orf_blastp', values=>['nr', 'swissprot', 'RefEuks', 'mitop', 'ecoli.aa'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'},b("blastn")),
+							td(checkbox_group(-name=>'orf_blastn', values=>['nt'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'}, b("other - not yet")),
+							td(checkbox_group(-name=>'orf_other', values=>['interpro', 'tmhmm', 'signalp', 'targetp'], -columns=>1))
+						)
+					)
+				),      # END ORF Searches
+				td(     # Intergenic Space
+					{-valign=>'top'},
+					table({border=>1},
+						TR(
+							td({-valign=>'top'}, b("blastx")),
+							td(checkbox_group(-name=>'intergenic_blastx', values=>['nr', 'swissprot', 'RefEuks', 'mitop', 'ecoli.aa'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'},b("blastn")),
+							td(checkbox_group(-name=>'intergenic_blastn', values=>['nt'], -columns=>1))
+						),
+					),br,
+					"Min: ", textfield(-name=>'gmoddb_search_intergenic_min', -value=>10, -size=>4),br,
+					"Max: ", textfield(-name=>'gmoddb_search_intergenic_max', -value=>20000, -size=>4)
+				),      # END Intergenic Space
+				td(     # Contig
+					{-valign=>'top'},
+					table({border=>1},
+						TR(
+							td({-valign=>'top'}, b("blastx")),
+							td(checkbox_group(-name=>'contig_blastx', values=>['nr', 'swissprot', 'RefEuks', 'mitop', 'ecoli.aa'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'},b("blastn")),
+							td(checkbox_group(-name=>'contig_blastn', values=>['nt'], -columns=>1))
+						),
+					),br,
+					"Min: ", textfield(-name=>'gmoddb_search_contig_min', -value=>100, -size=>4),br,
+					"Max: ", textfield(-name=>'gmoddb_search_contig_max', -value=>6000, -size=>4)
+				),      # END Contig
+				td(     # Contig Slice
+					{-valign=>'top'},
+					table({border=>1},
+						TR(
+							td({-valign=>'top'}, b("blastx - not yet")),
+							td(checkbox_group(-name=>'contigslice_blastx', values=>['nr', 'swissprot', 'RefEuks', 'mitop', 'ecoli.aa'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'},b("blastn - not yet")),
+							td(checkbox_group(-name=>'contigslice_blastn', values=>['nt'], -columns=>1))
+						),
+					)
+				),      # END Contig Slice
+				td(     # SAGE
+					{-valign=>'top'},
+					table({border=>1},
+						TR(
+							td({-valign=>'top'},b("blastn")),
+							td(checkbox_group(-name=>'sage_blastn', values=>['nt'], -columns=>1))
+						),
+						TR(
+							td({-valign=>'top'},b("Min Count")),
+							td(textfield(-name=>'gmoddb_search_sage_min', -value=>1, -size=>4)),
+						)
+					)
+				),      # END SAGE
+						
+						
+						
+						
+			)
+		),
+		checkbox(-name=>'gmoddb_search_delete_queue', -value=>'ON', -checked=>1, -label=>'Delete Search Queue Before Insert'),br
+		"not yet - ", checkbox(-name=>'gmoddb_search_start_cluster', -value=>'ON', -checked=>1, -label=>'Start on Cluster')," ", textfield(-name=>'gmoddb_search_num_start_cluster', size=>3, -value=>'20')," Jobs",br,
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		hidden(-name=>'gmoddb_feature_admin_action', -value=>'searches'),p,
+		submit(-name=>'gmoddb_search', -value=>'Start Searches'),
+		end_form;
+}
+
+
+
+
+untie(%session);
+[% END %]

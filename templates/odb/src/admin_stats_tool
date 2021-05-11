@@ -1,0 +1,82 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                   
+     
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('Administration Tool for Creating and Updating Statistics');
+
+if(param('gmoddb_update_stats') eq 'Update Stats')
+{
+	my $stat_bin = $mbl->mblpipe_dir . "/scripts/update_stats.pl";
+	if(param('gmoddb_genome_size_numeric') && param('gmoddb_genome_size_text') ne "")
+	{
+		# This is not safe
+		my ($genome_size) = param('gmoddb_genome_size_numeric') =~ /(\d+)/;
+		my ($genome_text_size) = param('gmoddb_genome_size_text') =~ /([a-z0-9\ \.]+)/i;
+		my ($is_est) = param('gmoddb_is_est') =~ /(\d+)/;
+		if ($is_est eq "") {$is_est=0};
+
+		$stat_bin .= " --organism=" . $mbl->organism . " --genome_size=" . $genome_size . ' --genome_text_size="' . $genome_text_size . '"' . " --is_est=" . $is_est . '&';
+		system($stat_bin);
+		print h2("Statistics are now being computed.  Results will appear when the computation is complete.");
+	}
+} else
+{
+	
+	print 	start_form,
+		table(
+			TR(
+				td("Estimated Genome Size(numeric)"), td(textfield(-name=>'gmoddb_genome_size_numeric'))
+			),
+			TR(
+				td("Estimated Genome Size(text)"), td(textfield(-name=>'gmoddb_genome_size_text'))
+			),
+			TR(
+				td("Are the data EST sequences?"), td(checkbox(-name=>'gmoddb_is_est', -value=>'1', -checked=>0, -label=>""))
+			)
+		),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		submit(-name=>'gmoddb_update_stats', -value=>'Update Stats'),
+		end_form;
+	
+	
+}
+
+
+untie(%session);
+[% END %]

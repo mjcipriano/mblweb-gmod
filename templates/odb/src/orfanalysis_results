@@ -1,0 +1,740 @@
+[% PERL %]
+
+use strict;
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                     
+my %session;
+                                                                                                                                                                                                                                                     
+tie %session, "Apache::Session::File", $session_id, {
+       Directory => $mbl->session_tmp_dir,
+};
+my $login_id = $session{'login_id'};
+ 
+my $getlr_taxidh = $dbh->prepare("SELECT t.left_value, t.right_value, tn.name FROM gmoddb.taxon t, gmoddb.taxon_name tn where t.taxon_id = ? AND tn.taxon_id = t.taxon_id AND tn.name_class = 'scientific name'");
+my $getlr_taxnameh = $dbh->prepare("SELECT t.left_value, t.right_value, tn.name from gmoddb.taxon t, gmoddb.taxon_name tn WHERE t.taxon_id = tn.taxon_id AND tn.name_class = 'scientific name' AND tn.name = ?");
+my $getannotation_h = $dbh->prepare("SELECT annotation from annotation where orfid = ? and delete_fg = 'N' AND blessed_fg = 'Y' order by update_dt DESC LIMIT 1");
+my $getmitoporfs_q = "SELECT distinct br.idname from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'mitop' AND br.evalue < " . $dbh->quote(param('mitop_max_e_value'));
+my $getmitoporfs_h = $dbh->prepare("SELECT distinct br.idname from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'mitop' AND br.evalue < ?");
+my $sageorfs_q = "SELECT distinct orfid from orftosage where tagtype IN ('Primary Sense Tag', 'Alternate Sense Tag')";
+my $getsageorfs_h = $dbh->prepare("SELECT distinct orfid from orftosage");
+my $inter_q = $dbh->prepare("select distinct lower(pfamA_id_B) as domain from gmoddb.interaction where pfamA_id_A = ?");
+my $signal_q = $dbh->prepare("select distinct br.idname, br.description from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'signalp' AND br.idname = ?");
+
+my $explain_query_string = '';
+my $resulth;
+my %exclude_hash;
+my $exclude_query = '';
+
+my $query = '';
+
+$query .=  "SELECT DISTINCT
+                        orfs.orfid
+                FROM
+                        orfs
+                WHERE
+			orfs.delete_fg = 'N'
+";
+
+
+
+if(param('contained_max_e_value') ne 'Not Relevant')
+{
+	my $blast_query = " SELECT DISTINCT
+                        orfs.orfid
+                FROM
+                        orfs,
+                        blast_results br,
+                        db,
+                        sequence_type,
+                        gmoddb.taxon t,
+                        gmoddb.gitotaxon git
+                WHERE
+                        br.idname = orfs.orfid
+                        AND t.taxon_id = git.taxid
+                        AND br.gi = git.gi
+                        AND db.id = br.db
+                        AND sequence_type.id = br.sequence_type_id
+                        AND sequence_type.type = 'orf'
+                        AND (description not like '%ATCC 50803%' OR description like '%gb|%')
+                        AND br.evalue < " . $dbh->quote(param('contained_max_e_value')) . " ";
+                                                                                                                                                                                                                                                     
+        # Include databases
+        $blast_query .= ' AND db.name IN (0';
+                                                                                                                                                                                                                                                     
+        foreach my $dbname(param('databases'))
+        {
+                if($dbname eq 'Swissprot')
+                {
+                        $dbname = 'swissprot';
+                } elsif($dbname eq 'Non-Redundant GenBank')
+                {
+                        $dbname = 'nr';
+                }
+                                                                                                                                                                                                                                                     
+                $blast_query .= ", '" . $dbname . "'";
+        }
+                                                                                                                                                                                                                                                     
+        $blast_query .= ") ";
+
+	# Parse through the descriptions to include
+
+	my $first = 0;
+                                                                                                                                                                                                                                                     
+        my @descs = split(",", param('desc'));
+        if(scalar @descs > 0)
+        {
+                                                                                                                                                                                                                                                     
+                $blast_query .= " AND ( ";
+                $explain_query_string .= 'Included in description (';
+                foreach my $desc(@descs)
+                {
+                        $desc = lc($desc);
+                        chomp($desc);
+                        if($desc =~ /^\s+$/ )
+                        {
+                                # Do nothing
+                        } else
+                        {
+                                $desc =~ s/^\s+//g;
+                                $desc =~ s/\s+$//g;
+                                if($first == 0)
+                                {
+                                        $first = 1;
+                                } else
+                                {
+                                        $blast_query .= " OR ";
+                                }
+                                $blast_query .= "lower(br.description) like '%$desc%' ";
+                                $explain_query_string .= '[' . $desc . ']';
+                        }
+                }
+                $explain_query_string .= ') ';
+                $blast_query .= ') ';
+        }
+
+	
+	# Include based on taxonomy
+	
+	my $first = 0;
+	my @include_org = split(",", param('contained_within'));
+	if(scalar @include_org > 0)
+	{
+		$explain_query_string .= '<br>Taxonomy to include(';
+		$blast_query .= ' AND ( ';
+		foreach my $include_organism (@include_org)
+		{
+		        chomp($include_organism);
+		        if($include_organism =~ /^\s+$/ )
+		        {
+		                # Do nothing
+		        } else
+		        {
+		                $include_organism =~ s/^\s+//g;
+		                $include_organism =~ s/\s+$//g;
+				# Get left and right values for this organism
+		
+				# If this is a taxid
+				if($include_organism =~ /^\d+$/)
+				{
+					$getlr_taxidh->execute($include_organism);
+					if($getlr_taxidh->rows > 0)
+					{
+						my $row = $getlr_taxidh->fetchrow_hashref;
+						if($first == 0)
+						{
+							$first = 1;
+						} else
+						{
+							$blast_query .= ' OR';
+						}
+						$blast_query .= ' (t.left_value between ' . $row->{left_value} . ' AND ' . $row->{right_value} . ' )'. "\n";
+						$explain_query_string .= '[' . $row->{name} . ']';
+					}
+				} else
+				{
+					$getlr_taxnameh->execute($include_organism);
+					if($getlr_taxnameh->rows > 0)
+		                        {
+		                                my $row = $getlr_taxnameh->fetchrow_hashref;
+	                                        if($first == 0)
+	                                        {
+	                                                $first = 1;
+	                                        } else
+	                                        {
+	                                                $blast_query .= ' OR';
+	                                        }
+		                                $blast_query .= ' (t.left_value between ' . $row->{left_value} . ' AND ' . $row->{right_value} . ' )' . "\n";
+						$explain_query_string .= '[' . $row->{name} . ']';
+		                        }
+		
+				}
+			}
+		}
+
+		$blast_query .= ') ';
+		$explain_query_string .= ') ';
+	}
+	
+	my $blast_in = $mbl->db_subselect($blast_query);
+	$query .= " AND orfs.orfid IN($blast_in) ";
+}
+
+
+
+if(param('notcontained_max_e_value') ne 'Not Relevant')
+{
+	my $blast_query = " SELECT DISTINCT
+                        orfs.orfid
+                FROM
+                        orfs,
+                        blast_results br,
+                        db,
+                        sequence_type,
+                        gmoddb.taxon t,
+                        gmoddb.gitotaxon git
+                WHERE
+                        br.idname = orfs.orfid
+                        AND t.taxon_id = git.taxid
+                        AND br.gi = git.gi
+                        AND db.id = br.db
+                        AND sequence_type.id = br.sequence_type_id
+                        AND sequence_type.type = 'orf'
+                        AND (description not like '%ATCC 50803%' OR description like '%gb|%')
+                        AND br.evalue < " . $dbh->quote(param('notcontained_max_e_value')) . " ";
+                                                                                                                                                                                                                                                     
+        # Include databases
+        $blast_query .= ' AND db.name IN (0';
+                                                                                                                                                                                                                                                     
+        foreach my $dbname(param('databases'))
+        {
+                if($dbname eq 'Swissprot')
+                {
+                        $dbname = 'swissprot';
+                } elsif($dbname eq 'Non-Redundant GenBank')
+                {
+                        $dbname = 'nr';
+                }
+                                                                                                                                                                                                                                                     
+                $blast_query .= ", '" . $dbname . "'";
+        }
+                                                                                                                                                                                                                                                     
+        $blast_query .= ") ";
+
+	# Parse through the descriptions to exclude
+
+	my $first = 0;
+                                                                                                                                                                                                                                                     
+        my @descs = split(",", param('not_desc'));
+        if(scalar @descs > 0)
+        {
+                                                                                                                                                                                                                                                     
+                $blast_query .= " AND ( ";
+                $explain_query_string .= 'Not Included in description (';
+                foreach my $desc(@descs)
+                {
+                        $desc = lc($desc);
+                        chomp($desc);
+                        if($desc =~ /^\s+$/ )
+                        {
+                                # Do nothing
+                        } else
+                        {
+                                $desc =~ s/^\s+//g;
+                                $desc =~ s/\s+$//g;
+                                if($first == 0)
+                                {
+                                        $first = 1;
+                                } else
+                                {
+                                        $blast_query .= " OR ";
+                                }
+                                $blast_query .= "lower(br.description) like '%$desc%' ";
+                                $explain_query_string .= '[' . $desc . ']';
+                        }
+                }
+                $explain_query_string .= ') ';
+                $blast_query .= ') ';
+        }
+
+	# Exclude based on taxonomy
+                                                                                                                                                                                                                                                       
+	my $first = 0;
+	my @exclude_org = split(",", param('notcontained_within'));
+	if(scalar @exclude_org > 0)
+	{
+		$explain_query_string .= '<br>Taxonomy to exclude(';
+	        $blast_query .= ' AND ( ';
+	        foreach my $exclude_organism (@exclude_org)
+	        {
+	                chomp($exclude_organism);
+	                if($exclude_organism =~ /^\s+$/ )
+	                {
+	                        # Do nothing
+	                } else
+	                {
+	                        $exclude_organism =~ s/^\s+//g;
+	                        $exclude_organism =~ s/\s+$//g;
+	                        # Get left and right values for this organism
+	                                                                                                                                                                                                                                                       
+	                        # If this is a taxid
+	                        if($exclude_organism =~ /^\d+$/)
+	                        {
+	                                $getlr_taxidh->execute($exclude_organism);
+	                                if($getlr_taxidh->rows > 0)
+	                                {
+	                                        my $row = $getlr_taxidh->fetchrow_hashref;
+	                                        if($first == 0)
+	                                        {
+	                                                $first = 1;
+	                                        } else
+	                                        {
+	                                                $blast_query .= ' OR';
+	                                        }
+	                                        $blast_query .= ' (t.left_value between ' . $row->{left_value} . ' AND ' . $row->{right_value} . ' )'. "\n";
+						$explain_query_string .= '[' . $row->{name} . ']';
+	                                }
+	                        } else
+	                        {
+	                                $getlr_taxnameh->execute($exclude_organism);
+	                                if($getlr_taxnameh->rows > 0)
+	                                {
+	                                        my $row = $getlr_taxnameh->fetchrow_hashref;
+	                                        if($first == 0)
+	                                        {
+	                                                $first = 1;
+	                                        } else
+	                                        {
+	                                                $blast_query .= ' OR';
+	                                        }
+	                                        $blast_query .= ' (t.left_value between ' . $row->{left_value} . ' AND ' . $row->{right_value} . ' )' . "\n";
+						$explain_query_string .= '[' . $row->{name} . ']';
+	                                }
+	                                                                                                                                                                                                                                                       
+	                        }
+	                }
+	        }
+	                                                                                                                                                                                                                                                       
+	        $blast_query .= ') ';
+		$explain_query_string .= ') ';
+		
+	}
+	my $blast_in = $mbl->db_subselect($blast_query);
+	$query .= " AND orfs.orfid NOT IN($blast_in) ";
+}
+
+if(param('sage_expression') eq 'yes')
+{
+	$explain_query_string .= "<br>Has evidence of transription";
+	my $sageorf_in = $mbl->db_subselect($sageorfs_q);
+	$query .= " AND orfs.orfid IN($sageorf_in) ";
+}
+
+if(param('mitop_fg') ne 'Not Relevant')
+{
+	my $mitop_in = $mbl->db_subselect($getmitoporfs_q);
+	if(param('mitop_fg') eq 'Hits Present')
+	{
+		$explain_query_string .= "<br>Has a BLAST hit to the MITOP database better then " . param('mitop_max_e_value');
+        	$query .= " AND orfs.orfid IN($mitop_in) ";
+	} elsif(param('mitop_fg') eq 'Hits Absent')
+	{
+		$explain_query_string .= "<br>Does NOT have a BLAST hit to the MITOP database better then " . param('mitop_max_e_value');;
+		$query .= " AND orfs.orfid NOT IN($mitop_in) ";
+	}
+
+}
+                                                                                                                                                                                                                                                       
+if(param('interpro_domains') ne "")
+{
+
+	my @interpro_descs = split(",", param('interpro_domains'));
+	my $interpro_or = '';
+	my $first = 0;
+
+	if(scalar @interpro_descs > 0)
+	{
+
+		$explain_query_string .= '<br>Included in Interpro/Pfam description (';
+		$query .= ' AND (';
+		foreach my $desc(@interpro_descs)
+		{
+			$desc = lc($desc);
+			chomp($desc);
+			if($desc =~ /^\s+$/ )
+			{
+				# Do nothing
+			} else
+			{
+				$desc =~ s/^\s+//g;
+				$desc =~ s/\s+$//g;
+
+				# Check for AND
+				if($desc =~ /\ AND\ /i)
+				{
+					my $and_first = 0;
+					# Split by AND
+					my @and_descs = split(/\ AND\ /i, $desc);
+					if(scalar @and_descs > 0)
+					{
+						if($first == 0)
+						{
+							$first = 1;
+							$query .= '  ( ';
+						} else
+						{
+							$query .= ' OR (';
+						}
+						foreach my $and_desc (@and_descs)
+						{
+							$and_desc =~ s/^\s+//g;
+							$and_desc =~ s/\s+$//g;
+							if($and_first == 0)
+							{
+								$and_first = 1;
+							} else
+							{
+								$query .= ' AND ';
+							}
+
+							my $getinterproorfs_q = interpro_in_query($and_desc);
+							my $interpro_in = $mbl->db_subselect($getinterproorfs_q);
+							$query .= " orfs.orfid IN($interpro_in) ";
+						}
+						$query .= ' ) ';
+					}
+				}else
+				{
+
+					if($first == 0)
+					{ 
+						$first = 1;
+					} else
+					{
+						$query .= " OR ";
+					}
+					my $getinterproorfs_q = interpro_in_query($desc);
+					my $interpro_in = $mbl->db_subselect($getinterproorfs_q);
+					$query .= " orfs.orfid IN($interpro_in) ";
+				}
+					$explain_query_string .= '[' . $desc . ']';
+			} 
+
+		}
+		$query .= ' ) ';
+	} 
+                                                                                                                                                                                                                                                   
+}
+
+
+
+
+if(param('domains_interaction') ne "")
+{
+
+	my @interaction_descs = split(",", param('domains_interaction'));
+	my $interactopm_or = '';
+	my $first = 0;
+	my @domains;
+
+	if(scalar @interaction_descs > 0)
+	{
+
+		$explain_query_string .= '<br>Has an iPfam Interaction (';
+		foreach my $desc(@interaction_descs)
+		{
+			$desc = lc($desc);
+			chomp($desc);
+			if($desc =~ /^\s+$/ )
+			{
+				# Do nothing
+			} else
+			{
+				$desc =~ s/^\s+//g;
+				$desc =~ s/\s+$//g;
+
+				# Find interacting domains for this domain
+				$inter_q->execute($desc);
+				while(my $row = $inter_q->fetchrow_hashref)
+				{
+					push(@domains, $row->{domain});
+				}							
+			}
+			$explain_query_string .= '[' . $desc . ']';
+		}
+
+		if(scalar @domains > 0)
+		{
+			my $interacting_q = "
+SELECT distinct br.idname
+from blast_results br,
+db,
+sequence_type st
+where st.id = br.sequence_type_id
+AND db.id = br.db
+AND st.type = 'orf'
+AND db.name IN ( 'interpro', 'Pfam_ls')
+AND (br.evalue < " . $dbh->quote(param('domains_interaction_max_e_value')) . " OR br.evalue is NULL)
+AND lower(br.hit_name) IN (";
+			my $first_domain = 1;
+			foreach my $domain(@domains)
+			{
+				if($first_domain)
+				{
+					$first_domain = 0;
+				} else
+				{
+					$interacting_q .= ", ";
+				}
+				$interacting_q .=  $dbh->quote(lc($domain)) ;
+			}
+			$interacting_q .= ')';
+	
+
+			my $interact_in = $mbl->db_subselect($interacting_q);
+			$query .= ' AND (';
+			$query .= " orfs.orfid IN($interact_in) ";
+
+			$query .= ' ) ';
+		} else
+		{
+			$query .= ' AND 0=1 ';
+		}
+	} 
+                                                                                                                                                                                                                                                   
+}
+
+
+
+
+
+
+
+if(param('transmembrane_domain') ne 'Not Relevant')
+{
+	my $tmhmm_db_id = $mbl->get_db_id('tmhmm');
+	my $interpro_db_id = $mbl->get_db_id('interpro');
+	my $tmhmm_st_id = $mbl->get_sequence_type_id('orf');
+	my $tmhmm_algo_id = $mbl->get_algorithm_id('tmhmm');
+
+	if($tmhmm_db_id)
+	{
+		$explain_query_string .= "<br>Transmembrane domain:" . param('transmembrane_domain');
+		my $get_tmhmm_orfs_q = "SELECT distinct idname from blast_results where (db = '$tmhmm_db_id' OR db = '$interpro_db_id') AND sequence_type_id = '$tmhmm_st_id' AND algorithm = '$tmhmm_algo_id'";
+		my $tmhmm_in = $mbl->db_subselect($get_tmhmm_orfs_q);
+		if( param('transmembrane_domain') eq 'Present')
+		{
+			$query .= " AND orfs.orfid IN ($tmhmm_in) ";
+		} elsif( param('transmembrane_domain') eq 'Absent')
+		{
+			$query .= " AND orfs.orfid NOT IN ($tmhmm_in) ";
+
+		}
+	}
+}
+
+
+if( param('signal_peptide') ne 'Not Relevant' )
+{
+	my $signal_in;
+	if(param('signal_peptide') eq 'Signal Peptide')
+	{
+		$signal_in = $mbl->db_subselect("select distinct br.idname from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'signalp' AND br.description = 'Signal peptide'");
+	} elsif(param('signal_peptide') eq 'Signal Anchor')
+	{
+		 $signal_in = $mbl->db_subselect("select distinct br.idname from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'signalp' AND br.description = 'Signal anchor'");
+	} elsif(param('signal_peptide') eq 'Non-Secretory')
+	{
+		$signal_in = $mbl->db_subselect("select distinct br.idname from blast_results br, db, sequence_type st where st.id = br.sequence_type_id AND db.id = br.db AND st.type = 'orf' AND db.name = 'signalp' AND br.description = 'Non-secretory protein'");
+	}
+
+	$explain_query_string .= "<br>Signal Peptide:" . param('signal_peptide') . ' is ' . param('signal_peptide_qual');
+
+	if( param('signal_peptide_qual') eq 'Present')
+	{
+		$query .= " AND orfs.orfid IN ($signal_in) ";
+	} elsif( param('signal_peptide_qual') eq 'Absent')
+	{
+		$query .= " AND orfs.orfid NOT IN ($signal_in) ";
+	}
+}
+
+if( defined(param('regulation')) && param('regulation') ne 'Not Relevant')
+{
+	my $regulated_in = param('regulation_regulated_in');
+        my $regulated_vs = param('regulation_regulated_vs');
+
+	if( $mbl->check_sage_access_library($login_id, $regulated_in) && $mbl->check_sage_access_library($login_id, $regulated_vs) )
+	{
+
+		my $regulated_in_total = $mbl->get_one_sage_library_total_filtered(param('regulation_regulated_in'));
+		my $regulated_vs_total = $mbl->get_one_sage_library_total_filtered(param('regulation_regulated_vs'));
+	
+		my $sage_orf_q = "select ots.orfid from sage_results_summary srs, orftosage ots where ots.tagid = srs.tagid AND ots.tagtype IN ('Primary Sense Tag', 'Alternate Sense Tag') GROUP BY ots.orfid HAVING ";
+		if(param('regulation') eq 'upregulated')
+		{
+			$sage_orf_q .= " sum(srs.$regulated_in)/$regulated_in_total > sum(srs.$regulated_vs)/$regulated_vs_total ";
+			$explain_query_string .= "<br> Is upregulated in ";
+	
+		} elsif(param('regulation') eq 'downregulated')
+		{
+			$sage_orf_q .= " sum(srs.$regulated_in)/$regulated_in_total < sum(srs.$regulated_vs)/$regulated_vs_total ";
+			$explain_query_string .= "<br> Is downregulated in ";
+		} elsif(param('regulation') eq 'exclusive')
+		{
+			$sage_orf_q .= " sum(srs.$regulated_in)/$regulated_in_total > 0 AND  sum(srs.$regulated_vs)/$regulated_vs_total = 0 ";
+			$explain_query_string .= "<br> Is exclusive in ";
+		}
+	
+		$explain_query_string .= $mbl->get_sage_library_info($regulated_in)->{name} . ' verses ' .  $mbl->get_sage_library_info($regulated_vs)->{name};
+	
+		my $sageorf_in = $mbl->db_subselect($sage_orf_q);
+	
+		$query .= " AND orfs.orfid IN ($sageorf_in) ";
+	}	
+}
+
+
+
+
+
+	warn($query);
+	$resulth = $dbh->prepare($query);
+	$resulth->execute();
+
+
+if( lc(param('export_type')) eq 'html')
+{
+	print b($explain_query_string  . "<br>\n");
+	print 	"<table border=1>",
+		TR(
+			th("Orf ID"),
+			th("Annotation"),
+#			th("Interpro Domains"),
+			th("Transmembrane Domains"),
+			th("Signal Sequence")
+		);
+
+	while(my $result_row = $resulth->fetchrow_hashref)
+	{
+		if($exclude_hash{$result_row->{orfid}} == 1)
+		{
+			# Don't print this one
+		} else
+		{
+			# Get the number of transmembrane domains
+			# Find out if it has a signal sequence
+			$signal_q->execute($result_row->{orfid});
+			my $signal_p_res = 'N';
+			if($signal_q->rows > 0)
+			{
+				$signal_p_res = $signal_q->fetchrow_hashref->{description};
+			}
+			
+			print	TR(
+					td($mbl->orf_link($result_row->{orfid})) ,
+					td($mbl->get_newest_annotation($result_row->{orfid}) ),
+#					td(small($mbl->get_orf_feature_results_list_reduced($result_row->{orfid}, "1e-3"))),
+					td($mbl->get_orf_transmembrane_domains($result_row->{orfid})),
+					td($signal_p_res)
+				);
+		}
+	}
+} elsif( lc(param('export_type')) eq 'tab delimited')
+{
+        print header( {
+        -content_type=>'application/txt; name="orfsearch.txt"',
+        -content_disposition=>'attachment; filename=orfsearch.txt',
+        -content_transfer_encoding=>'binary'}
+        );
+
+	print join("\t", "ID", "LINK", "ANNOTATION", "DOMAINS", "TMHMM", "SIGNALPEPTIDE") . "\n";
+	
+	while(my $result_row = $resulth->fetchrow_hashref)
+	{
+		if($exclude_hash{$result_row->{orfid}} == 1)
+		{
+			# Don't print this one
+		} else
+		{
+                        $signal_q->execute($result_row->{orfid});
+                        my $signal_p_res = 'N';
+                        if($signal_q->rows > 0)
+                        {
+				$signal_p_res = $signal_q->fetchrow_hashref->{description};
+                        }
+
+			print join("\t", $result_row->{orfid}, $mbl->orf_link($result_row->{orfid}), $mbl->get_newest_annotation($result_row->{orfid}), $mbl->get_orf_feature_results_list_reduced($result_row->{orfid}, "1e-3"), $mbl->get_orf_transmembrane_domains($result_row->{orfid}), $signal_p_res) . "\n";
+		}
+	}
+
+
+} else
+{ 
+        print header( {
+        -content_type=>'application/txt; name="orfsearch.txt"',
+        -content_disposition=>'attachment; filename=orfsearch.txt',
+        -content_transfer_encoding=>'binary'}
+	);
+
+	if(lc(param('export_type')) eq 'fasta amino acid sequences')
+	{
+		while(my $result_row = $resulth->fetchrow_hashref)
+		{
+			if($exclude_hash{$result_row->{orfid}} == 1)
+	                {
+	                        # Don't print this one
+	                } else
+			{
+				print 	">", $result_row->{orfid} .  " | " . $mbl->get_newest_annotation($result_row->{orfid}) . "\n",
+					$mbl->get_orf_aa_sequence($result_row->{orfid}), "\n";
+			}
+				
+		}
+	} elsif(lc(param('export_type')) eq 'fasta nucleotide sequences')
+	{
+	        while(my $result_row = $resulth->fetchrow_hashref)
+	        {
+			if($exclude_hash{$result_row->{orfid}} == 1)
+	                {
+	                        # Don't print this one
+	                } else
+			{
+		                print   ">", $result_row->{orfid} . " | " . $mbl->get_newest_annotation($result_row->{orfid}) . "\n",
+		                        $mbl->get_orf_nt_sequence($result_row->{orfid}), "\n";
+			}
+
+	        }
+	} 
+}
+
+
+sub interpro_in_query
+{
+	my $search_term = shift;
+
+my $return_val =
+"SELECT distinct br.idname
+from blast_results br,
+db,
+sequence_type st
+where st.id = br.sequence_type_id
+AND db.id = br.db
+AND st.type = 'orf'
+AND db.name IN ( 'interpro', 'Pfam_ls')
+AND (br.evalue < " . $dbh->quote(param('interpro_max_e_value')) . " OR br.evalue is NULL)
+AND position(" . $dbh->quote(lc($search_term)) . " in lower(concat(IFNULL(br.description, ''), IFNULL(br.hit_name, ''), IFNULL(br.accession_number, ''), IFNULL(br.primary_id, '') )))  > 0
+";
+
+}
+
+
+[% END %]

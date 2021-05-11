@@ -1,0 +1,49 @@
+[% IF noheader == 'F' %]
+
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+	<h3>ORF Table</h3>	
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center>
+		</center>
+		</td>
+	</tr>
+
+</table>
+[% END %]
+[% INCLUDE orftable %]
+[% IF noheader == 'F' %]
+
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]
+[% END %]
+

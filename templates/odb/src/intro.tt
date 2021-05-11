@@ -1,0 +1,80 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		&nbsp<br>
+		<center>
+			[% INCLUDE perl_searchtool  default_search = 'search available annotation' %]
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<br>
+
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+
+			[% html_leftcolumn %]
+
+		</td>
+		<td width="4%"></td>
+		<td width="48%" valign="top">
+			<table border=0 width="100%">
+			<tr class="databody">
+				<td>
+				<center><h1>Summary Statistics</h1>
+				[% overview_datasnapshot %]
+				[% overview_statistics_footer %]
+				</center><br>
+
+				</td>
+			</tr>
+			<tr><td>&nbsp;</td></tr>
+			<tr>
+				<td>
+
+				[% html_rightcolumn %]
+				
+				</td>
+			</tr>
+			</table>		
+		</td>
+	</tr>
+
+</table>
+
+<p>&nbsp;
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+<p>&nbsp;		
+		[% html_funding %]
+<p>&nbsp;
+		</td>
+	</tr>
+
+</table>
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

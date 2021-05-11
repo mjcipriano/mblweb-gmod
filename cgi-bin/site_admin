@@ -1,0 +1,203 @@
+#!/usr/bin/perl
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+
+my $tdir = '/var/www/templates/odb';
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+                                                                                                                                                                                                                                                      
+my $database =  path_info();
+$database    =~ s!^/!!; 
+
+my $dbh = $mbl->dbh();
+
+print header();
+
+
+
+print   h1('Admin Tool for Editing Page Modules');
+
+if(param('new_page_name') ne '' && param('template_name') ne '')
+{
+	my $insert_template_q = 'insert into templates (template_file, page_name) VALUES (?, ?)';
+	my $insert_template_h = $dbh->prepare($insert_template_q);
+
+	$insert_template_h->execute(param('template_name'), param('new_page_name'));
+	param(-name=>'new_page_name', -value=>'');
+	param(-name=>'template_name', -value=>'');
+	param(-name=>'page_name', -value=>param('new_page_name'));
+
+}
+
+if(param('Delete'))
+{
+	my $delete_var_query = 'delete from html where template = ?';
+	my $delete_var_h = $dbh->prepare($delete_var_query);
+	my $delete_template_query = 'delete from templates where page_name = ?';
+	my $delete_template_h = $dbh->prepare($delete_template_query);
+                                                                                                                                                                                                                                                       
+	print h1('Deleting Page ' . param('page_name'));
+	
+	$delete_var_h->execute(param('page_name'));
+	$delete_template_h->execute(param('page_name'));
+
+}
+
+
+# Get all of the possible pages
+my $page_query = 'select template_file, page_name from templates order by page_name';
+my $page_h = $dbh->prepare($page_query);
+$page_h->execute();
+my @pages_array;
+while( my $row = $page_h->fetchrow_hashref)
+{
+	push (@pages_array, $row->{page_name});
+}
+
+
+
+if(param('edit_values') eq 'true')
+{
+                                                                                                                                                                                                                                                       
+	my $update_q = "UPDATE html set value = ? where template = ? AND variable = ?";
+	my $update_h = $dbh->prepare($update_q);
+
+	my @vals = param();
+	foreach my $name(@vals)
+	{
+		if($name =~ m/^delete_/)
+		{
+			# Delete the variable
+			$name =~ s/^delete_//;
+			my $delete_q = 'DELETE from html where template = ? AND variable = ?';
+			my $delete_h = $dbh->prepare($delete_q);
+			$delete_h->execute(param('page_name'), $name);
+
+		} elsif($name eq 'new_var_var' || $name eq 'new_var_value')
+		{
+                        # Do nothing
+                } elsif( ($name eq 'page_name') || ($name eq 'edit_values') )
+                {
+                        # Do nothing
+                } else
+                {
+                        $update_h->execute(param($name), param('page_name'), $name);
+                }
+        }
+
+        # Now check if we have a new value to insert
+        if(param('new_var_var') ne '' && param('new_var_value') ne '')
+        {
+                my $insert_q = 'insert into html (template, variable, value) VALUES (?, ?, ?)';
+                my $insert_h = $dbh->prepare($insert_q);
+                $insert_h->execute( param('page_name'), param('new_var_var'), param('new_var_value'));
+        }
+}
+
+
+# Get an array of templates
+
+print
+	start_form,
+	table({-border=>1},
+		TR(
+			td('Edit Existing Page'),
+			td( popup_menu(-name=>"page_name", -values=>\@pages_array) ),
+			td( submit({-name=>'Delete', -value=>'delete_page'}) ) 
+		
+		),
+		TR(
+			td( 'New Page' ),
+			td('Page Name'),
+			td('Template File')
+		),
+		TR(
+			td(' '),
+			td(textfield({-name=>"new_page_name", -default=>''})),
+			td(textfield({-name=>"template_name", -default=>''}))
+		)
+	),
+	p,
+	submit,
+	end_form,
+	hr;
+
+if(param() && !param('Delete') )
+{
+	param(-name=>'new_var_var', -value=>'');
+	param(-name=>'new_var_value', -value=>'');
+
+	my $var_query = "select template, variable, value from html where template = ?";
+	my $var_h = $dbh->prepare($var_query);
+	$var_h->execute(param('page_name'));
+
+	# Determine which variables are available
+	my $fileh = $dbh->prepare("select template_file from templates where page_name = ?");
+	$fileh->execute(param('page_name'));
+	if($fileh->rows > 0)
+	{
+		my $filerow = $fileh->fetchrow_hashref;
+		my $filename = $tdir . "/src/" . $filerow->{template_file};
+		open(TEMPLATEFILE, $filename);
+		print("Variables displayed on this page:<br>");
+		while(<TEMPLATEFILE>)
+		{
+			if($_ =~ /\[\%(.+)\%\]/)
+			{
+				my $hit = $1;
+				if($hit =~ /INCLUDE/)
+				{
+				} elsif($hit =~ /IF\ /)
+				{
+				} elsif ($hit =~ /END\ /)
+				{
+				} else
+				{
+					print "$hit<br>";
+				}
+			}
+		}
+		
+	}
+
+	print h1('Edit Below for page "' . param('page_name') . '"'),
+	start_form,
+	hidden({-name=>"page_name", -default=>param('page_name')}), "\n",
+	hidden({-name=>"edit_values", -default=>"true"}), "\n",
+	'<table border=1>',
+	'<tr><td><b>Variable</b></td><td><b>Value</b></td><td><b>delete</b></td></tr>';
+	while( my $row = $var_h->fetchrow_hashref )
+	{
+		print 	'<tr><td>', 
+			$row->{variable},
+			'</td><td>',
+			textarea({-name=>$row->{variable}, -default=>$row->{value}, -cols=>100, -rows=>10}),
+			'</td>',
+			'<td>',
+			checkbox_group( -name=>'delete_' . $row->{variable}, -values=>'T'),
+			'</td>',
+			'</tr>', "\n";
+	}
+
+	# Now put an extra box for a new variable to add
+
+	print 	'<tr><td>',
+		textfield({-name=>"new_var_var", -default=>''}),
+		'</td><td>',
+		textarea({-name=>"new_var_value", -cols=>100, -rows=>10}),
+		'</td>',
+		'</tr>', "\n";
+
+	print 	'</table>', "\n",
+		p,
+		submit,
+		end_form,
+		hr;
+
+}
+

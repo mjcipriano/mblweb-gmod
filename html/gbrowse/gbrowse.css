@@ -1,0 +1,102 @@
+A:link            { text-decoration: underline; 
+		    font-size: 11px;
+                    color: #000099;
+                  }
+A:visited         { text-decoration: underline; 
+                    font-size: 11px;
+                    color: #000099;
+                  }
+A:hover           { text-decoration: none; 
+                  }
+A.banner          { color  : #FFFFFF;
+                    font-size : small;
+                    text-decoration : none;
+                  }
+A.bblue           { color: #FFFFFF;
+                    background-color: #9999FF;
+                    font-size : small;
+                    text-align: center;
+                  }
+A.bred            { color: #FFFFFF;
+                    background-color: #FF6666;
+                    font-size : small;
+                    text-align: center;
+                  }
+BODY              { background-color: white; 
+                    font-family: verdana;
+	            font-size: 11px;
+                  }
+H1                { color:  #000099; 
+                    font-family: verdana;
+		    font-size: 18px; 
+		    background-position: center center;
+                  }
+H2                { color: #000099; 
+                    font-family: verdana; 
+		    font-size: 15px;
+                    background-position: center center;
+                  }
+H3                { color: #000099; 
+                    font-family: verdana; 
+                  }
+H4                { color: #000099; 
+                    font-family: verdana; 
+                    font-size: 11px;
+		    font-weight: bold;
+                  }
+INPUT             { background-color: white; }
+P                 { font-family: verdana;
+		    font-size: 11px;
+		  }
+SELECT            { background-color: white; }
+TABLE             { padding: 0;
+                    spacing: 0;
+                  }
+TD                { font-family: verdana; 
+                    padding: 0; 
+	            font-size: 11px;
+		  }
+TH                { font-family: verdana; 
+                    padding: 0; 
+	            font-size: 11px;
+                  }
+INPUT.reset_button{ background-color: white;
+	            color: black; 
+                  }
+.datatitle        { background-color: #eeeedd; }
+.databody         { background-color: #eeeedd; }
+.searchtitle      { background-color: #CCCC99;
+	            font-size: small;
+		  }
+.searchbody       { background-color: #eeeedd;
+	            font-size: 11px;
+		    font-weight: bold;
+		  }
+.imagedesc        { background-color: #CCCC99;
+                    font-size: 11px;
+		  }
+.imageborder	  { border: thin #000000 solid}
+.trackdesc        { background-color: #CCCC99;
+                    font-size: 11px;
+		    font-weight: bold;
+		  }
+.settingstitle    { background-color: #CCCC99;
+	            font-size: small;
+  		  }
+.settingsbodydesc { background-color: #CCCC99;
+                    font-size: small;
+		  }
+.settingsbody     { background-color: #eeeedd;
+	            font-size: small;
+		  }
+.uploadtitle      { background-color: #CCCC99;
+	            font-size: small;
+		  }
+.uploadbody       { background-color: #eeeedd;
+	            font-size: small;
+		  }
+.technicalinfo    { background-color: #FFFFFF; }
+.toggle           { color: #000099; }
+.error            { color: red; }
+.note             { color: red; }
+.pre              { font-family: monospace; }

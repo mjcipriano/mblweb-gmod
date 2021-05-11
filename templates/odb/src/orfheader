@@ -1,0 +1,57 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $orfid;
+if(param('orf') =~ /^orf\:/)
+{
+	($orfid) = param('orf') =~ /^orf\:(\d+)/;
+} else
+{
+	$orfid = param('orf');
+}
+if($mbl->check_orf_existance($orfid))
+{ 
+	my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+
+	print 	center('<p><font size="+4" color="red"><b>ORF ' . $orfid . '</b></font>',
+		h3($mbl->get_newest_annotation($orfid))), br;
+
+	my $imgstart = $attrib_row->{start} - 5000;
+	my $imgstop = $attrib_row->{stop} + 5000;
+
+	print center(
+		b('***You can now click on orfs within this window to goto that orf detail page.  To goto gbrowse, click the link below*****'),br,
+		'<a href="' . $mbl->gbrowse_organism_cgi . "?ref=" . $attrib_row->{contig} . ";start=$imgstart;stop=$imgstop\">Goto Genome Browser</a>",br,
+		'<iframe src="' . $mbl->gbrowse_organism_img . "?name=" . $attrib_row->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3;embed=1\" width=\"900\" height=\"300\"><img src=\"" . $mbl->gbrowse_organism_img . "?name=" . $attrib_row->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3\"></iframe>",br,
+		i('<a href="' . $mbl->gbrowse_organism_img . "?name=" . $attrib_row->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3&image_class=SVG\">Click here for publication quality image (SVG)</a>"), br
+		);
+} elsif($mbl->check_orf_existance($orfid, 1))
+{
+	my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+	print   center('<p><font size="+4" color="red"><b>ORF ' . $orfid . '</b></font>', h3($mbl->get_newest_annotation($orfid))), br;
+
+	print '<h2><center> This orf has been marked as deleted for reason <b>"' . $attrib_row->{delete_reason} . '"</b>.</center></h2><br>';
+} else
+{
+	print "<h1><center><b>This ORF id number was not found in the database.</b></center></h1>";
+}
+
+[% END %]

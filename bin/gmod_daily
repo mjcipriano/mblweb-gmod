@@ -1,0 +1,3 @@
+#!/bin/sh
+
+rsync -av /xraid/bioware/gmod/data/blastdb/* /blastdb/

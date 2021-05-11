@@ -1,0 +1,108 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+tie %session, "Apache::Session::File", $session_id, {
+	Directory => $mbl->session_tmp_dir,
+};
+
+if(!param('orfids'))
+{
+	print 	"Paste below one orf per line", br,
+		start_form( -action=>$mbl->organism_home, -method=>'POST'),
+		textarea(-name=>"orfids", -rows=>20, -columns=>20),br,
+		popup_menu({-name=>"export_type", -values=>["HTML", "Tab Delimited", "Fasta AA Sequence", "Fasta NT Sequence"]}),
+		br,
+		hidden(-name=>'page', -value=>'orftable'),
+		submit(),
+		end_form;
+} else
+{
+
+	my $orfs = param('orfids');
+	$orfs =~ s/\r//gi;
+	my @orfs = split("\n", $orfs);
+
+        if(param('export_type') eq 'HTML')
+	{
+		print "<table border=1><tr><td>Orfid</td><td>Score</td><td>Evalue</td><td>Accession</td><td>Description</td></tr>";
+	} elsif(param('export_type') eq 'Tab Delimited')
+	{
+		print header( {
+			-content_type=>'application/txt; name="orftable.txt"',
+			-content_disposition=>'attachment; filename=orftable.txt',
+			-content_transfer_encoding=>'binary'});
+			print "ORFID\tSCORE\tEVALUE\tACCESSION\tDESCRIPTION\tDOMAINS\tTRANSMEMBRANE_DOMAINS\tSIGNAL_PEPTIDES\n";
+	} elsif(param('export_type') eq 'Fasta AA Sequence')
+	{
+		print header( {
+			-content_type=>'application/txt; name="orftable.txt"',
+			-content_disposition=>'attachment; filename=orftable.txt',
+			-content_transfer_encoding=>'binary'});
+
+	} elsif(param('export_type') eq 'Fasta NT Sequence')
+	{
+		print header( {
+			-content_type=>'application/txt; name="orftable.txt"',
+			-content_disposition=>'attachment; filename=orftable.txt',
+			-content_transfer_encoding=>'binary'});
+	}
+	
+	foreach my $orfid (@orfs)
+	{
+		chomp($orfid);
+		my $hit = $mbl->get_top_orf_hit($orfid, 100);
+
+		if($hit)
+		{
+			if(param('export_type') eq 'HTML')
+			{
+				print TR( td( $mbl->orf_link($orfid)), td($hit->{score}), td($hit->{evalue}), td($hit->{accession_number}), td($hit->{description})
+					);
+			} elsif(param('export_type') eq 'Tab Delimited')
+			{
+				
+				print join("\t", $orfid, $hit->{score}, $hit->{evalue}, $hit->{accession_number}, $hit->{description}, $mbl->get_orf_feature_results_list_reduced($orfid, "1e-3"), $mbl->get_orf_transmembrane_domains($orfid), $mbl->get_orf_signal_peptide($orfid) ) . "\n";
+			} elsif(param('export_type') eq 'Fasta AA Sequence')
+			{
+				print ">" . $orfid . ' | ' . $hit->{description} . "\n" . $mbl->get_orf_aa_sequence($orfid) . "\n";
+			} elsif(param('export_type') eq 'Fasta NT Sequence')
+			{
+				print ">" . $orfid . ' | ' . $hit->{description} . "\n" . $mbl->get_orf_nt_sequence($orfid) . "\n";
+			}
+		} else
+		{
+			if(param('export_type') eq 'HTML')
+			{
+				print TR( td($orfid) );
+			} elsif(param('export_type') eq 'Tab Delimited')
+			{
+				print join("\t", $orfid, undef, undef, undef, undef, $mbl->get_orf_feature_results_list_reduced($orfid, "1e-3"), $mbl->get_orf_transmembrane_domains($orfid), $mbl->get_orf_signal_peptide($orfid) ) . "\n";
+			}
+		}
+		
+
+	}
+
+	if(param('export_type') eq 'HTML')
+	{
+		print "</table>";
+	}
+	
+}
+
+
+
+[% END %]

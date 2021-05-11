@@ -1,0 +1,4 @@
+<form method="post" action="[% html_site_cgi %]/[% database_name %]" enctype="application/x-www-form-urlencoded" name="mainform">
+<input type="hidden" name="page" value="orfsearch">
+<input type="text" name="searchterm" value="[% default_search %]" size="40"><input type="submit" name="Search" value="View">[% footer_text %]
+</form>

@@ -1,0 +1,165 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+  
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $session_id = $stash->get('session_id');
+my %session;
+
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+my $libh = $mbl->get_sage_library_total_filtered();
+
+my $access_list = $mbl->get_sage_access_libraries($session{'login_id'});
+
+
+my $search_word = param('tag');
+$search_word =~ s/%([\dA-Fa-f]{2})/pack("C", hex($1))/eg;
+
+# Check if the search term has returns in it and no commas
+my @terms;
+
+warn($search_word);
+if($search_word =~ /\,/)
+{
+	@terms = split(',', $search_word);
+} elsif($search_word =~ /\n/)
+{
+	@terms = split("\n", $search_word);
+} else
+{
+	@terms = split(',', $search_word);
+}
+
+my %taghash;
+
+
+foreach my $term(@terms)
+{
+	chomp($term);
+	# remove the end and beginning of the term that is whitespace
+
+	$term =~ s/^\s*//;
+	$term =~ s/\s*$//;
+
+	if($term =~ /^\s*$/)
+	{
+		# Do nothing
+	} elsif($term =~ /sagetag\:/)
+	{
+		my ($tag) = $term =~ /sagetag\:(\d+)/;
+		if($mbl->check_sagetag_exists($tag, $session{'login_id'}))
+		{
+			$taghash{$tag} = 1;
+		}
+	} elsif($term =~ /^\d+$/)
+	{
+		if($mbl->check_sagetag_exists($term, $session{'login_id'}))
+		{
+			$taghash{$term} = 1;
+		}
+	} elsif($term =~ /orf\:/)
+	{
+		my ($orfid) = $term =~ /orf\:(\d+)/;
+		my $orftags = $mbl->get_sagetags_by_orfid($orfid);
+		foreach my $tag(@{$orftags})
+		{
+			if($mbl->check_sagetag_exists($tag, $session{'login_id'}))
+			{
+				$taghash{$tag} = 1;
+			}
+		}
+	} else
+	{
+		my $tagarray = $mbl->get_sage_by_terms($term, $access_list);
+		foreach my $tag (@{$tagarray})
+		{
+			$taghash{$tag} = 1;
+		}
+	}
+}
+
+if(keys %taghash > 0)
+{
+
+	# Sort the tags by orfid
+
+	my %tagtoorf;
+	while(my ($tagid, undef) = each(%taghash))
+	{
+		my $orfidhash = $mbl->get_sage_orf_info($tagid);
+		if($orfidhash)
+		{
+			$tagtoorf{$tagid} = $orfidhash->{orfid};
+		} else
+		{
+			$tagtoorf{$tagid} = 9999999;
+		}
+	}
+	my @sort_array = sort { $tagtoorf{$a} <=> $tagtoorf{$b} } keys %tagtoorf;
+
+	my $libraries = $mbl->get_sage_access_libraries_array($session{'login_id'});
+
+	print "<table border=1 width='100%'><tr><td>Tag ID</td><td width='1%'>Sequence</td><td>Tag Type</td><td>OrfID</td><td width='70%'>Description</td>";
+	foreach my $lib (@{$libraries})
+	{
+		print "<td>";
+		print $mbl->get_sage_library_short_name($lib);
+		print "</td>";
+	}
+	print "</tr>";
+	foreach my $tagid(@sort_array)
+	{	
+		print "<tr>";
+		# Tagid
+		print "<td>" . $mbl->sagetag_link($tagid) . "</td>";
+
+		# Sequence
+		print "<td><pre>" . $mbl->get_sage_sequence($tagid) . "</pre></td>";
+
+		# Tag Type
+		print $mbl->color_tagtype($tagid);
+
+		# OrfID
+		print "<td>";
+		my $orfhash = $mbl->get_sage_orf_info($tagid);
+		if($orfhash)
+		{
+			print $mbl->orf_link($orfhash->{orfid});
+		} else
+		{
+			print "&nbsp;";
+		}
+		print "</td>";
+		# Description
+		print "<td>" . $mbl->get_sagetag_assignment_desc($tagid) . "&nbsp;</td>";
+
+		# Libraries
+		my $results = $mbl->get_sage_results_hash($tagid, 'percent', $session{'login_id'});
+		foreach my $lib (@{$libraries})
+		{
+			print $mbl->color_expression($results->{$lib}, $results->{$lib});
+		}
+	#. " " . $mbl->get_sage_annotation($tagid, 'percent', $session{'login_id'}) . "<br>\n";
+	#	$mbl>get_sage_annotation($tagid, 'percent', $session{'login_id'});
+	}
+} else
+{
+	print "<h2>No matches found</h2>\n";
+
+}
+
+untie(%session);
+
+[% END %]

@@ -1,0 +1,50 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+</table>
+
+<br>
+[% INCLUDE admin_page_tool %]
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+
+			[% html_leftcolumn %]
+
+		</td>
+		<td width="4%"></td>
+		<td width="48%" valign="top">
+			<table border=0 width="100%">
+			<tr><td>&nbsp;</td></tr>
+			<tr>
+				<td>
+
+				[% html_rightcolumn %]
+				
+				</td>
+			</tr>
+			</table>		
+		</td>
+	</tr>
+
+</table>
+<p>&nbsp;
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

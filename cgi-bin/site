@@ -1,0 +1,340 @@
+#!/usr/bin/perl
+
+use strict;
+
+use Mbl;
+
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Apache;
+use Apache::Session::File;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+if($mbl->organism eq "new")
+{
+	print header();
+	print start_html(-title=>"GMOD DB Administation", -style=>{'src'=>'/gbrowse/gbrowse.css'} );
+	print center(h1("Create New Database"));
+
+	# Create the database
+	if(param('gmoddb_createdb') eq "Create Database")
+	{
+		my $organism_name = param('organism_name');
+		my $gmoddb_name = param('gmoddb_name');
+		my $gmoddb_assembly_version = param('gmoddb_assembly_version');
+		my $gmoddb_admin_username = param('gmoddb_admin_username');
+		my $gmoddb_admin_password = param('gmoddb_admin_password');
+		print "<center><table><tr><td><ul>";
+		print 	
+			li("ORGANISM NAME: $organism_name"),
+			li("GMODDB NAME: $gmoddb_name"),
+			li("GMDODB VERSION: $gmoddb_assembly_version"),
+			li("GMODDB ADMIN: $gmoddb_admin_username"),
+			li("GMODDB PASS: *"),
+			li("Drop DB: " . param('gmoddb_dropdb'));
+
+		# TODO: verify username and password with database rather then hardset password
+
+		if($gmoddb_admin_username ne 'admin' || $gmoddb_admin_password ne "gmodadmin")
+		{
+			print li("ERROR: Incorrect Username or Password!");
+			exit;
+		}
+		print li("Username and password ACCEPTED");
+
+		my $new_mbl = Mbl::new(undef, $gmoddb_name);
+		my $new_dbh = $new_mbl->dbh;
+
+		# Drop the database if reqested and the database already exists
+		if(param('gmoddb_dropdb') eq 'ON' && $new_dbh)
+		{
+			# TODO: Drop the database
+			my $rc = $new_dbh->func('dropdb', $gmoddb_name, 'admin');
+			if($rc)
+			{
+				print li("Database $gmoddb_name DROPPED");
+			} else
+			{
+				my $error = $new_dbh->{'mysql_error'};
+				print li("ERROR in dropping database $gmoddb_name : $error");
+				exit;
+			}
+		}
+
+		# Create the database if it does not exist OR if it was just dropped
+		if(!$new_dbh || param('gmoddb_dropdb') eq 'ON')
+		{
+			# TODO: Create the database
+			print li("Creating the database");
+			my $shared_dbh = $mbl->shared_dbh;
+			my $rc = $shared_dbh->func('createdb', $gmoddb_name, 'admin');
+			if($rc)
+			{
+				print li("Database $gmoddb_name created!");
+			
+			} else
+			{
+				my $error = $shared_dbh->{'mysql_error'};
+				print li("ERROR creating database $gmoddb_name : $error");
+				exit;
+			}
+			# Create the objects
+			$new_mbl = Mbl::new(undef, $gmoddb_name);
+			$new_dbh = $new_mbl->dbh;
+		} else
+		{
+			print li("Database already created");
+		}
+		if(!$new_dbh)
+		{
+			print li("ERROR: Unable to create database.");
+			exit;
+		}
+
+		# Create a new mbl object with the current database
+		$mbl = Mbl::new(undef, $gmoddb_name);
+		my $mysql_command = "mysql -h " . $mbl->{HOSTNAME} . " -u " . $mbl->{USER} . " -D " . $new_mbl->organism . " --password=" . $mbl->{PASSWORD} ;
+
+		# Import the full schema if reqested
+		if(param('gmoddb_create_fullschema') eq "ON")
+		{
+			print li("Installing Full schema");
+			my $full_schema_file = $mbl->gmodweb_dir . "/sql/create_script.sql";
+			system($mysql_command . " < $full_schema_file");
+		}	
+
+		print li("Checking if schema is installed");
+
+		my $checkh = $new_dbh->prepare("select variable from html where value = ? AND variable = ? AND template = 'default'");
+		my $res = $checkh->execute($gmoddb_name, 'database_name');
+
+		# Load the schema if the query failed, the html table does not exist or it was requested to be added
+		if($checkh->rows < 1 || !$res || param('gmoddb_loadschema_defaults') eq 'ON')
+		{
+			# Schema Does not exists
+			print li("Schema does not exist, creating schema");
+			my $schema_file = $mbl->gmodweb_dir . "/sql/setup.sql";
+
+			# Load the sql file
+			system($mysql_command . " < $schema_file");
+			print li("Setting schema defaults");
+
+			# Edit the variables in the tables that need editing
+			my $dbh = $mbl->dbh;
+			my $update_db_h = $dbh->prepare("update html set value = ? where template = 'default' AND variable = ?");
+			$update_db_h->execute($gmoddb_name, 'database_name');
+			$update_db_h->execute($gmoddb_assembly_version, 'database_version');
+			$update_db_h->execute($organism_name . ' GMOD', 'html_title_text');
+			my $header = qq'
+			<center><p><font size="+4" color="red"><b><i>$organism_name</i>
+			Nucleotide Sequencing Browser</b></font></p>  
+			This current version is a development version constructed using the
+			<a href="http://www.gmod.org">Generic Model Organism Database</a> 
+			paradigm.</p></center>';
+			$update_db_h->execute($header, 'html_header');
+
+		} 
+		$checkh->execute($gmoddb_name, 'database_name');
+		# Check if creation of the schema was successful
+		if($checkh->rows < 1)
+		{
+			print li("ERROR, Schema creation failed!");
+			exit;
+		} else
+		{
+			print li("Schema installed.");
+		}
+
+		print center(h2('Site created click <a href="' . $mbl->organism_home() . '">HERE</a> to goto your new website'));
+
+		print "</ul></td></tr></table></center>";
+	} else
+	{	
+		# Print out the form for creating a new database
+		print 	center(
+				h2("Enter the information for the database you would like to create."),
+				start_form,
+				table(
+					TR(
+						td( "Full Organism Name"), td(textfield('organism_name') )
+					),
+					TR(
+						td( "GMOD Database Name"), td(textfield('gmoddb_name') )
+					),
+					TR(
+						td( "GMOD Database Assembly Version"), td(textfield("gmoddb_assembly_version") )
+					),
+					TR(
+						td("Administrator Username"), td(textfield("gmoddb_admin_username") )
+					),
+					TR(
+						td("Administrator Password"), td(password_field("gmoddb_admin_password") )
+					),
+					TR(
+						td( {-colspan=>2},
+							center(
+								checkbox(	-name=>'gmoddb_dropdb',
+										-value=>'ON',
+										-label=>"Drop Database if Exists"
+								)
+							)
+						),
+					),
+					TR(
+						td( {-colspan=>2},
+							center(
+								checkbox(	-name=>'gmoddb_create_fullschema',
+										-value=>'ON',
+										-label=>"Create Full Schema (Drops tables if they exist)"
+								)
+							)
+						),
+					),
+					TR(
+						td( {-colspan=>2},
+							center(
+								checkbox(	-name=>'gmoddb_loadschema_defaults',
+										-value=>'ON',
+										-label=>"Load Schema Defaults (Does not drop tables if they exist)"
+								)
+							)
+						)
+
+					)
+				),p,
+				
+				submit(-name=>"gmoddb_createdb", -value=>"Create Database"),
+				hidden(-name=>'organism', -value=>'new'),
+				end_form
+			);
+	}
+		
+	exit;
+}
+my $template = $mbl->template();
+
+my $dbh = $mbl->dbh();
+# If no database connection was found for this organism or this organism was not provided, print an error screen stating such
+if(!$dbh || $mbl->organism eq "")
+{
+	print header();
+	print start_html(-title=>"GMOD DB Administation", -style=>{'src'=>'/gbrowse/gbrowse.css'} );
+	print center(h1("No Database of this name is found!"));
+	my $shared_dbh = $mbl->shared_dbh();
+	if($shared_dbh)
+	{
+		print "Here is a list of available databases";
+	} else
+	{
+		print "No Shared database found. Would you like to create the shared database schema?";
+	}
+	print center(h2('Check <a href="/index.html">Here</a> for a list of available databases'));
+	exit;
+}
+
+my $page_name = param('page');
+
+# Sessions and Cookies
+
+my %session;
+my $session_id;
+# The cookie for a session id will be session_id_organismname to allow for multiple organism databases to have their own cookie
+if(cookie('SESSION_ID' . '_' . $mbl->organism))
+{
+	# Test if a session is already created, if it is, use that one, if not, create a new one.
+	eval {	tie %session, "Apache::Session::File", cookie('SESSION_ID' . '_' . $mbl->organism), { Directory => $mbl->session_tmp_dir, LockDirectory   => $mbl->session_lock_dir};untie(%session); }; 
+	if($@)
+	{
+		tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+                LockDirectory   => $mbl->session_lock_dir
+        	};
+	} else
+	{
+		tie %session, "Apache::Session::File", cookie('SESSION_ID' . '_' . $mbl->organism), { Directory => $mbl->session_tmp_dir, LockDirectory   => $mbl->session_lock_dir};
+	}
+	$session_id = $session{_session_id};
+
+} else
+{
+	tie %session, "Apache::Session::File", $session_id, {
+		Directory => $mbl->session_tmp_dir,
+                LockDirectory   => $mbl->session_lock_dir
+        };
+        $session_id = $session{_session_id};
+}
+
+
+my $login_id = $session{'login_id'};
+
+# The expiration time for a cookie
+my $expiration_time = time()+60*60*1;
+
+# Change the .mbl.edu to a different address if from a different domain. This will allow the cookies to be accessed from any server within the .mbl.edu domain
+my $session_cookie = cookie(-name=>'SESSION_ID' . '_' . $mbl->organism , -value=>$session_id, -expires=>$expiration_time, -domain=>'.mbl.edu');
+
+# Check if this is a private dataset and reset page_name to login if it is
+my $shared_dbh = $mbl->shared_dbh();
+
+if($shared_dbh)
+{
+	# Check if this is private
+	my $private_h = $shared_dbh->prepare("select access_type from gmodweb_databases where database_name = ?");
+	$private_h->execute($mbl->organism);
+
+	# Check if this is only asking for a header of footer
+	if($page_name eq 'header' || $page_name eq 'footer')
+	{
+		# continue on
+	} else
+	{
+		if($private_h->rows > 0)
+		{
+			my $row = $private_h->fetchrow_hashref;
+			if($row->{access_type} eq 'private' && !defined($login_id))
+			{
+				## UNCOMMENT THIS if you want to make all databases public
+				$page_name = 'login';
+			}
+		}
+	}
+}
+
+# Redirect to the intro page if no page name is given
+if(!$page_name)
+{
+        $page_name = 'intro';
+}
+
+my $data = $mbl->set_template_data_var($page_name);
+$data->{session_id} = $session_id;
+
+my $template_filename = $mbl->get_template_file_name($page_name);
+
+
+# This is for the sageanalysis tool and other tools that print their own header line
+if( param('noheader') eq 'T')
+{
+} elsif( (param('export_type') eq 'html') || (param('export_type') eq 'HTML') || !defined(param('export_type')) )
+{
+	param(-name=>'noheader', -value=>'F');
+} else
+{
+	param(-name=>'noheader', -value=>'T');	
+}
+
+if(param('noheader') eq 'T')
+{
+	$data->{'noheader'} = 'T';
+} else
+{
+        $data->{'noheader'} = 'F';
+	print header(-cookies=>$session_cookie);
+}
+untie(%session);
+
+$template->process($template_filename, $data) or die $template->error;
+

@@ -1,0 +1,42 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+
+my $contig_table =  $mbl->get_contig_linking_reads_table(param('contig_one'), param('contig_two'));
+if($contig_table)
+{
+
+	print '<center><b>Between Contig ' . $mbl->contig_link(param('contig_one')) . ' and ' . $mbl->contig_link(param('contig_two')) . "</b></center><br><br>";
+	my $contig_one_stats = $mbl->contig_info(param('contig_one'));
+	my $contig_two_stats = $mbl->contig_info(param('contig_two'));
+
+	if($contig_one_stats->{super_id} == $contig_two_stats->{super_id})
+	{
+		my $super_start = $mbl->get_min($contig_one_stats->{modified_contig_start_base}, $contig_two_stats->{modified_contig_start_base});;
+		my $super_stop = $mbl->get_max($contig_two_stats->{modified_contig_start_base} + $contig_two_stats->{contig_length}, $contig_one_stats->{modified_contig_start_base} + $contig_one_stats->{contig_length});
+	
+	print '<center>',
+		a( 
+			{-href=>$mbl->gbrowse_organism_cgi . "?name=supercontig_" . $contig_one_stats->{super_id} . ":$super_start..$super_stop;"}, 
+			img( {-src=>$mbl->gbrowse_organism_img  . "?name=supercontig_" . $contig_one_stats->{super_id} . ":$super_start..$super_stop;width=800;type=Contig+3+ReadPartDiffContigNeg+2+ReadPartDiffContigPos+2"}) 
+		) . '<p>';;
+	}
+	print $contig_table;
+} else
+{
+	print "Contig Not Found";
+}
+
+print "<br><br>";
+
+
+[% END %]

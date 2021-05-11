@@ -1,0 +1,201 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+use File::Temp qw/ tempfile tempdir /;
+
+$CGI::POST_MAX = 1024 * 10000;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('User Administration Tool');
+
+# Print out a menu of different sage tasks
+print 	table({-cellspacing=>8},
+		TR(
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_user_admin_action=update_user_accounts"}, "User Accounts")),
+			
+		)
+	),p;
+
+
+if(param('gmoddb_user_admin_action') eq 'update_user_accounts')
+{
+
+	my $user_id = param('old_user');
+	# Check if there is an update action
+	if(param('updateme') eq 'Update')
+	{
+		# Find the information to update and update it.
+		my $user_name = param('user_name');
+		my $first_name = param('first_name');
+		my $last_name = param('last_name');
+		my $active_fg = param('active_fg');
+		my $password = param('password');
+		my $email = param('email');
+		my $institution = param('institution');
+
+		my $updateh = $dbh->prepare("update sage_library_names set library = ?, name = ?, short_name = ?, priority = ? where library = ?");
+		my $updateh = $dbh->prepare("update user set user_name = ?, first_name = ?, last_name = ?, active_fg = ?, email = ?, institution = ? where id = ?");
+		my $updatepass = $dbh->prepare("update user set password = password(?) where id = ?");
+		$updateh->execute($user_name, $first_name, $last_name, $active_fg , $email, $institution, $user_id);
+		if($password ne "")
+		{
+			$updatepass->execute($password, $user_id);
+		}	
+	} elsif(param('updateme') eq 'Insert')
+	{
+		my $user_name = lc(param('user_name'));
+		my $first_name = param('first_name');
+		my $last_name = param('last_name');
+		my $active_fg = param('active_fg');
+		my $password = param('password');
+		my $email = param('email');
+		my $institution = param('institution');
+		my $inserth = $dbh->prepare("insert into user (id, user_name, first_name, last_name, active_fg, password, email, institution) VALUES (NULL, ?, ?, ?, ?, password(?), ?, ?)");
+		if($password eq "")
+		{
+			$password = lc(substr($first_name, 0, 1) . substr($last_name, 0, 1) . 'sage04');
+		}
+
+		$inserth->execute($user_name, $first_name, $last_name, $active_fg, $password, $email, $institution);
+	}
+
+
+	# Get all of the users
+	my $userlist_h = $dbh->prepare("select id, user_name, first_name, last_name, active_fg, password, email, institution from user order by user_name");
+	$userlist_h->execute();
+	print 	start_form,
+		"<table border=1>",
+		TR(
+			td("Edit"), td("user_name"), td("First"), td("Last"), td("Active")
+		);
+
+	while(my $user_row = $userlist_h->fetchrow_hashref)
+	{
+		print TR(
+			td( submit( -name=>'gmoddb_user_admin_edit_user', -value=>$user_row->{id}) ), 
+			td($user_row->{user_name}), 
+			td($user_row->{first_name}), 
+			td($user_row->{last_name}), 
+			td($user_row->{active_fg})
+		);
+	}
+
+	print	"</table>",
+		submit( -name=>'gmoddb_user_admin_edit_user', -value=>'New User') ,
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		end_form;
+
+} elsif(param('gmoddb_user_admin_edit_user'))
+{
+	my $user = param('gmoddb_user_admin_edit_user');
+	if($user eq "New User")
+	{
+		print 	h2("New User"),
+			start_form,
+			table( {-border=>1},
+				TR(
+					td( "User Name" ), td( textfield(-name=>"user_name") )
+				),
+				TR(
+					td( "First Name" ), td(textfield(-name=>"first_name" ) )
+				),
+				TR(
+					td( "Last Name" ), td(textfield(-name=>"last_name") )
+				),
+				TR(
+					td( "Active" ), td(textfield(-name=>"active_fg") )
+				),
+				TR(
+					td( "Password" ), td(textfield(-name=>"password") )
+				),
+				TR(
+					td( "Email" ), td(textfield(-name=>"email") )
+				),
+				TR(
+					td( "Institution" ), td(textfield(-name=>"institution") )
+				),
+			),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>"old_user", -value=>'none'),
+			hidden(-name=>'page', -value=>param('page')),
+			hidden(-name=>'gmoddb_user_admin_action', -value=>'update_user_accounts'),
+			submit(-name=>'updateme', -value=>'Insert');
+
+	} else
+	{
+		my $user_info = $mbl->get_login_info_from_id($user);
+		print 	h2("Update User"),
+			start_form,
+			table( {-border=>1},
+				TR(
+					td( "User Name" ), td( textfield(-name=>"user_name", -value=>$user_info->{user_name}) )
+				),
+				TR(
+					td( "First Name" ), td(textfield(-name=>"first_name", -value=>$user_info->{first_name}) )
+				),
+				TR(
+					td( "Last Name" ), td(textfield(-name=>"last_name", -value=>$user_info->{last_name}) )
+				),
+				TR(
+					td( "Active" ), td(textfield(-name=>"active_fg", -value=>$user_info->{active_fg}) )
+				),
+				TR(
+					td( "Password" ), td(textfield(-name=>"password", -value=>$user_info->{password}) )
+				),
+				TR(
+					td( "Email" ), td(textfield(-name=>"email", -value=>$user_info->{email}) )
+				),
+				TR(
+					td( "Institution" ), td(textfield(-name=>"institution", -value=>$user_info->{institution}) )
+				),
+			),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>"old_user", -value=>$user_info->{id}),
+			hidden(-name=>'page', -value=>param('page')),
+			hidden(-name=>'gmoddb_user_admin_action', -value=>'update_user_accounts'),
+			submit(-name=>'updateme', -value=>"Update"),
+
+	}
+
+} else
+{
+	print h2("Pick an action in the above menu");
+}
+
+
+untie(%session);
+[% END %]

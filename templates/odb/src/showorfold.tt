@@ -1,0 +1,50 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center>
+		
+			[% INCLUDE perl_searchtool 
+			   default_search = 'orf:' %] [% INCLUDE orf_searchtool %]
+
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<br>
+<h1> Orf Information </h1>
+[% INCLUDE orfdata %]
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

@@ -1,0 +1,119 @@
+[% PERL %]
+
+use Mbl;
+use CGI qw(:all);
+
+use strict;
+   
+my $mbl = Mbl::new(path_info(), param('organism'));
+ 
+my $dbh = $mbl->dbh();
+
+
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                   
+my %session;
+tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+};
+
+# Intro
+
+if($mbl->check_page_exists('intro'))
+{
+	print $mbl->page_link('intro', 'Home') . ' | ';
+}
+
+print '<a href="' . $mbl->gbrowse_organism_cgi . '">Gbrowse</a> | ';
+
+
+if($mbl->check_page_exists('gblast'))
+{
+        print $mbl->page_link('gblast') . ' | ';
+} elsif($mbl->check_page_exists('blast'))
+{
+        print $mbl->page_link('blast') . ' | ';
+}
+
+
+if($mbl->check_page_exists('assembly'))
+{
+        print $mbl->page_link('assembly') . ' | ';
+}
+
+if($mbl->check_page_exists('orfs'))
+{
+        print $mbl->page_link('orfs', 'ORFs') . ' | ';
+}
+
+if($mbl->check_page_exists('orfs'))
+{
+        print $mbl->page_link('domains', 'Domains') . ' | ';
+}
+
+if($mbl->check_page_exists('sage'))
+{
+        print $mbl->page_link('sage', 'SAGE') . ' | ';
+}
+
+
+if($mbl->check_page_exists('download'))
+{
+        print $mbl->page_link('download') . ' | ';
+}
+
+if($mbl->check_page_exists('news'))
+{
+        print $mbl->page_link('news', 'What\'s New') . ' | ';
+}
+
+if($mbl->check_page_exists('general_help'))
+{
+        print $mbl->page_link('general_help', 'Getting Started') . ' | ';
+}
+
+if($mbl->check_page_exists('login'))
+{
+        print $mbl->page_link('login') . ' | ';
+}
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	print "<br>Admin Menu: ";
+	if($mbl->check_page_exists('admin_page'))
+	{
+	        print $mbl->page_link('admin_page', 'Edit Pages') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_stats'))
+	{
+	        print $mbl->page_link('admin_stats', 'Update Statistics') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_import'))
+	{
+	        print $mbl->page_link('admin_import', 'Import Data') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_user'))
+	{
+	        print $mbl->page_link('admin_user', 'User') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_features'))
+	{
+	        print $mbl->page_link('admin_features', 'Feature Annotation') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_sage'))
+	{
+	        print $mbl->page_link('admin_sage', 'Sage') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_gbrowse'))
+	{
+	        print $mbl->page_link('admin_gbrowse', 'GBrowse') . ' | ';
+	}
+	if($mbl->check_page_exists('admin_user'))
+	{
+	        print $mbl->page_link('admin_user', 'User') . ' | ';
+	}
+	
+}
+untie(%session);
+
+[% END %]

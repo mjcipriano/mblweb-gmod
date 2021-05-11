@@ -1,0 +1,25 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+<center><p><font size="+4" color="red"><b>Read Sequence</b></font></p></center>
+<hr>
+
+[% INCLUDE readfasta %]
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

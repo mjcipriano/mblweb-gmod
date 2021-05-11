@@ -1,0 +1,22 @@
+#!/usr/bin/perl -w
+use lib '/xraid/bioware/gmod/gbrowse-configurations/';
+
+#$Id: moby_server,v 1.1 2005/07/05 18:14:34 mcipriano Exp $
+use SOAP::Transport::HTTP;
+use MobyServices::GbrowseServices;
+use strict;
+
+my $x = new SOAP::Transport::HTTP::CGI;
+
+$x->dispatch_with({
+    'http://biomoby.org/#GbrowseGetReferenceSeqObj' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetReferenceFasta' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetReferenceGFF2' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetReferenceGFF3' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetFeatureSequenceObject' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetFeatureGFF3' =>  'MobyServices::GbrowseServices',
+    'http://biomoby.org/#GbrowseGetFeatureGFF2' =>  'MobyServices::GbrowseServices',
+    
+    });
+$x->handle;
+

@@ -1,0 +1,13 @@
+[% USE CGI %]
+[% IF CGI.param('largebox') %]
+<center><b>You may enter your query with each query separated by a new line (enter) or a comma.</b></center><br>
+<form action="[% html_site_cgi %]/[% database_name %]" enctype="application/x-www-form-urlencoded" name="mainform" method="POST">
+<input type="hidden" name="page" value="sagesearch">
+<textarea name="tag" value="[% default_search %]" rows=5 cols=30></textarea><input type="submit" name="Search" value="View">[% footer_text %]
+</form>
+[% ELSE %]
+<form action="[% html_site_cgi %]/[% database_name %]" enctype="application/x-www-form-urlencoded" name="mainform" method="POST">
+<input type="hidden" name="page" value="sagesearch">
+<input type="text" name="tag" value="[% default_search %]" size="40"><input type="submit" name="Search" value="View"> <i>(<small><a href="?page=sage&largebox=1">textbox entry</a></small>)</i>[% footer_text %]
+</form>
+[% END %]

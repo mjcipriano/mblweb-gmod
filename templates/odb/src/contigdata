@@ -1,0 +1,50 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $contig_id;
+if(param('contig') =~ /contig_/)
+{
+	($contig_id) = param('contig') =~ /(\d+)/;
+} else
+{
+	$contig_id = param('contig');
+}
+
+print "<h4>Contig: ";
+print '<a href="' . $mbl->gbrowse_organism_cgi . '?name=contig_';
+print  $contig_id;
+print '">';
+print $contig_id;
+print "</a></h4>";
+print "<br>\n";
+print "<b>Download:</b></td><td>" . $mbl->contig_fasta_link($contig_id, 'Fasta Sequence');
+print '<center>';
+my $contig_table =  $mbl->get_contig_table($contig_id);
+if($contig_table)
+{
+	print $contig_table;
+	print '<hr>';
+	print $mbl->get_contig_links_table($contig_id);
+} else
+{
+	print "Contig Not Found";
+}
+
+my $contig_desc = $mbl->get_contig_desc('contig_' . $contig_id);
+print "<p>" . $contig_desc;
+
+print "</center>";
+
+
+
+
+[% END %]

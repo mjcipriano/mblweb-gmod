@@ -1,0 +1,265 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+  
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $session_id = $stash->get('session_id');
+my %session;
+
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+my $libh;
+
+my %totallib;
+
+# Find out totals for all libraries so we can get percentages also
+
+my $totallib = $mbl->get_sage_library_total_filtered();
+
+my $access_list = $mbl->get_sage_access_libraries($session{'login_id'});
+# Check if I have annotation admin rights
+my $annotation_admin = 0;
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	$annotation_admin = 1;
+}
+
+if(!$annotation_admin)
+{
+	print b("You are not authorized to make these changes");
+	exit;
+}
+
+my $poss_orfsh = $dbh->prepare("select tagmapid, tagid, start, direction, orfid, orf_direction, tagtype from sage_temp where tagmapid = ? AND orfid = ?");
+my $tagmap_h = $dbh->prepare("select tagid, contig, start, stop, direction, assignment, id from tagmap where id = ?");
+my $lib_short_string;
+my $expr_string;
+my $tagid = param('tagid');
+my $orfid = param('orfid');
+my $tagmapid = param('tagmapid');
+my $tagtype = param('tagtype');
+my $contig;
+my $start;
+my $stop;
+my $direction;
+
+if($tagmapid)
+{
+	$tagmap_h->execute($tagmapid);
+	my $row = $tagmap_h->fetchrow_hashref;
+	if($row)
+	{
+		$contig = $row->{contig};
+		$start = $row->{start};
+		$stop = $row->{stop};
+		$direction = $row->{direction};
+	}
+}
+
+if($orfid && $tagmapid && !$tagtype)
+{
+	$poss_orfsh->execute($tagmapid, $orfid);
+	my $row = $poss_orfsh->fetchrow_hashref;
+	if($row)
+	{
+		$tagtype = $row->{tagtype};
+	}
+}
+
+my $tagsequence =  $mbl->get_sage_sequence($tagid);
+
+
+# Check if we just submited a change
+if(param('gmoddb_sagetag_update') eq 'Update Tag')
+{
+
+	# Create insert handlers
+	my $ins_tagmap_h = $dbh->prepare("insert into tagmap (tagid, contig, start, stop, direction, assignment, id) VALUES (?, ?, ?, ?, ?, ?, ?)");
+	my $ins_sage_temp_h = $dbh->prepare("insert into sage_temp (tagid, start, direction, orfid, orf_direction, tagtype, tagmapid) VALUES (?, ?, ?, ?, ?, ?, ?)");
+	my $ins_orftosage_h = $dbh->prepare("insert into orftosage (orfid, tagid, tagtype, unique_genome_fg, unique_trans_fg, tagmapid, manual_fg, assignment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+
+	# Checking handlers
+	my $check_tagmapid = $dbh->prepare("select id from tagmap where id = ?");
+	my $check_sagetemp = $dbh->prepare("select tagid from sage_temp where tagmapid = ? AND orfid = ?");
+	# Deleting Handlers
+	my $delete_orftosage = $dbh->prepare("delete from orftosage where orfid = ? AND tagmapid = ? AND tagtype = ?");
+
+	print "<center>";
+	# Update the record
+
+	# First check that our variables are valid;
+	my ($gmoddb_tagid) = param('gmoddb_sagetag_tagid') =~ /(\d+)/;
+	my ($gmoddb_orfid) = param('gmoddb_sagetag_orfid') =~ /(\d+)/;
+	my ($gmoddb_tagmapid) = param('gmoddb_sagetag_tagmapid') =~ /(\d+)/;
+	my ($gmoddb_contig) = param('gmoddb_sagetag_contig') =~ /(\w+)/;
+	my ($gmoddb_start) = param('gmoddb_sagetag_contig_start') =~ /(\d+)/;
+	my ($gmoddb_stop) = param('gmoddb_sagetag_contig_stop') =~ /(\d+)/;
+	my ($gmoddb_direction) = param('gmoddb_sagetag_contig_direction') =~ /([\+\-])/;
+	my ($gmoddb_tagtype) = param('gmoddb_sagetag_contig_tagtype') =~ /([\w\ ]+)/;
+	my $seq_region;
+	# Check for error conditions
+	my $continue = 1;
+	if(!defined( $gmoddb_tagid ))
+	{
+		print "TagID not defined!<br>";
+		$continue = 0;
+	} else
+	{
+		# Check if the tagid exists
+
+	}
+	if(!defined( $gmoddb_orfid ))
+	{
+		print "ORF not defined!<br>";
+		$continue = 0;
+	} else
+	{
+		# Check if the orf exists
+	}
+	if(!defined( $gmoddb_tagmapid ))
+	{
+		print "Tag Map ID not defined, creating new one!<br>";
+		$gmoddb_tagmapid = undef;
+	} else
+	{
+		# Check if this tagmapid exists
+		$check_tagmapid->execute($gmoddb_tagmapid );
+		if($check_tagmapid->rows < 1)
+		{
+			$continue = 0;
+		}
+
+	}
+	if(!defined( $gmoddb_contig) )
+	{
+		print "Contig not defined!<br>";
+		$continue = 0;
+	}
+	if(!defined( $gmoddb_start ))
+	{
+		print "Start not defined!<br>";
+		$continue = 0;
+	}
+	if(!defined( $gmoddb_stop ))
+	{
+		print "Stop not defined!<br>";
+		$continue = 0;
+	}
+	if(!defined( $gmoddb_direction ))
+	{
+		print "Direction not defined!<br>";
+		$continue = 0;
+	}
+	if( defined($gmoddb_contig) && defined($gmoddb_start) && defined($gmoddb_stop) && defined($gmoddb_direction) )
+	{
+		# Check that this position exists on this contig
+		$seq_region = $mbl->get_region($gmoddb_contig, $gmoddb_start, $gmoddb_stop - $gmoddb_start);
+		my $length = $gmoddb_stop - $gmoddb_start;
+		if(length($seq_region) != $length)
+		{
+			$continue = 0;
+			print b("Contig position does not exist");
+		}
+		if($gmoddb_direction eq '-')
+		{
+			$seq_region = $mbl->reverse_complement($seq_region);
+		}
+	}
+	if(!defined( $gmoddb_tagtype ))
+	{
+		print "Tag Type not defined!<br>";
+		$continue = 0;
+	}
+
+	print br,b("Updating variables"),br;
+	print join("<br>", "tagid:".$gmoddb_tagid, "orfid:".$gmoddb_orfid, "tagmapid:".$gmoddb_tagmapid, "contig:".$gmoddb_contig, "start:".$gmoddb_start, "stop:".$gmoddb_stop, "direction:".$gmoddb_direction, "tagtype:".$gmoddb_tagtype, "seq:$seq_region") . "<br>";
+
+	if(!$continue)
+	{
+		print p,b("Error, can not continue with update!"),br;
+	} else
+	{
+		if(!defined($gmoddb_tagmapid) && param('delete') ne 'Y')
+		{
+			# Create a new tagmap location
+			$ins_tagmap_h->execute($gmoddb_tagid, $gmoddb_contig, $gmoddb_start, $gmoddb_stop, $gmoddb_direction, 'MANUAL', $gmoddb_tagmapid);
+			# This is mysql specific
+			$gmoddb_tagmapid = $dbh->{'mysql_insertid'};
+		}
+
+		if(param('delete') eq 'Y' && defined($gmoddb_tagmapid))
+		{
+			# Delete from orftosage where this orfid and tagmapid and tagtype are equal to the passed variables
+			$delete_orftosage->execute($gmoddb_orfid, $gmoddb_tagmapid, $gmoddb_tagtype);
+			print "Tag Assignment Deleted!";
+		} else
+		{
+			# Insert into sage_temp, only if there is not already one for this orfid and tagmapid
+
+			$check_sagetemp->execute($gmoddb_tagmapid, $gmoddb_orfid);
+			if($check_sagetemp->rows == 0)
+			{
+				$ins_sage_temp_h ->execute($gmoddb_tagid, $gmoddb_start, $gmoddb_direction, $gmoddb_orfid, undef, $gmoddb_tagtype, $gmoddb_tagmapid);
+			}
+			# Insert into orftosage
+			$ins_orftosage_h->execute($gmoddb_orfid, $gmoddb_tagid, $gmoddb_tagtype, 'N', 'N', $gmoddb_tagmapid, 'Y', 'MANUAL');
+			print "New Tag Assignment Complete!";
+		}
+		
+		
+	}
+	
+	print "</center>";
+} else
+{
+	# Print out a Form
+
+	print	center(start_form( action=>$mbl->organism_home, method=>'POST'),
+		table( {-border=>1},
+			TR(
+				td("Sage Tag"), td(textfield(-name=>'gmoddb_sagetag_tagid', -value=>$tagid))
+			),
+			TR(
+				td("Orf"), td(textfield(-name=>'gmoddb_sagetag_orfid', -value=>$orfid))
+			),
+			TR(
+				td("Tagmap ID"), td(textfield(-name=>'gmoddb_sagetag_tagmapid', -value=>$tagmapid))
+			),
+			TR(
+				td("Contig"), td(textfield(-name=>'gmoddb_sagetag_contig', -value=>$contig))
+			),
+			TR(
+				td("Start"), td(textfield(-name=>'gmoddb_sagetag_contig_start', -value=>$start))
+			),
+			TR(
+				td("Stop"), td(textfield(-name=>'gmoddb_sagetag_contig_stop', -value=>$stop))
+			),
+			TR(
+				td("Direction"), td(textfield(-name=>'gmoddb_sagetag_contig_direction', -value=>$direction))
+			),
+			TR(
+				td("Tag Type"), td(popup_menu(-name=>'gmoddb_sagetag_contig_tagtype', -values=>['', 'Primary Sense Tag', 'Alternate Sense Tag', 'Primary Antisense Tag', 'Alternate Antisense Tag'], -default=>$tagtype))
+			),
+		),
+		checkbox(-name=>'delete', -value=>param('delete')),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		submit(-name=>'gmoddb_sagetag_update', -value=>'Update Tag'),
+		end_form
+		);
+}
+
+untie(%session);
+
+[% END %]

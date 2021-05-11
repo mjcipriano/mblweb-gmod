@@ -1,0 +1,99 @@
+#!/usr/bin/perl
+
+
+use strict;
+
+use CGI qw(:all);
+use GD;
+#use GD::Graph::linespoints;
+use GD::Graph::bars;
+
+
+
+#print header();
+binmode STDOUT;
+
+my @libs = split(",", param('libs'));
+my @lines = param('expr');
+
+my @data;
+my $tmp;
+my @marker_array;
+my $marker_number = 1;
+my $max = 0;
+my $min = 0;
+my $width = 600;
+my $height = 200;
+
+
+if(param('width'))
+{
+	$width = param('width');
+}
+if(param('height'))
+{
+	$height = param('height');
+}
+
+
+foreach my $lib(@libs)
+{
+	chomp($lib);
+	push(@{$tmp}, $lib);
+	push(@marker_array, $marker_number);
+	$marker_number++;
+}
+push(@data, $tmp);
+
+foreach my $line(@lines)
+{
+	my $tmp;
+	my @expres = split(",", $line);
+	foreach my $point (@expres)
+	{
+		chomp($point);
+		push(@{$tmp}, $point);
+		
+		# check for new max or min
+		if($point > $max)
+		{
+			$max = $point;
+		}
+		if($point < $min)
+		{
+			$min = $point;
+		}
+	}
+	push(@data, $tmp);
+
+}
+
+
+
+
+#my $graph = GD::Graph::linespoints->new( 600, 200 );
+my $graph = GD::Graph::bars->new( $width, $height );
+
+
+$graph->set( 
+      x_label           => 'Library',
+      y_label           => '% Expression',
+      title             => 'Expression Graph',
+      y_max_value       => $max,
+      y_tick_number     => 0.5,
+      y_label_skip      => 0,
+      x_labels_vertical =>1,
+      x_label_position	=>.5,
+      box_axis		=>0,
+      markers		=>@marker_array
+  );
+
+
+
+print header( -type => "image/png", -expires => "-1d" );
+my $gd = $graph->plot(\@data);
+
+
+
+print $gd->png;
+

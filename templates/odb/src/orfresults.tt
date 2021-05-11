@@ -1,0 +1,52 @@
+[% IF noheader == 'F' %]
+
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		<center><p><font size="+3" color="red"><b>Open Reading Frame Search Results</b></font></p></center>
+		[% html_subtitle %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center>
+		
+			[% INCLUDE perl_searchtool %]
+
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<br>
+
+<table border="0" width=100%>	
+	<tr>
+		<td valign="top">
+[% END %]
+[% INCLUDE orfanalysis_results %]
+[% IF noheader == 'F' %]
+		</td>
+	</tr>
+
+</table>
+
+<hr>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]
+
+[% END %]

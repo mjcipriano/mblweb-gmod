@@ -1,0 +1,5 @@
+[% PERL %]
+
+	print system('/var/www/html/blast/blast_tt.cgi');
+
+[% END %]

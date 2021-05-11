@@ -1,0 +1,245 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $orfid;
+if(param('orf') =~ /^orf\:/)
+{
+	($orfid) = param('orf') =~ /^orf\:(\d+)/;
+} else
+{
+	$orfid = param('orf');
+}
+
+if($mbl->check_orf_existance($orfid, 1))
+{ 
+	my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+
+	my $sequence = $mbl->get_orf_nt_sequence($orfid);
+
+	my $trans_seq = $mbl->get_orf_aa_sequence($orfid);
+
+	if($mbl->check_orf_existance($orfid))
+	{
+		print center(h3("Statistics"));
+
+		print table( { -border=>1, width=>"95%"},
+			TR(
+				td(center(b("Test"))),
+				td(center(b("Score"))),
+				td(center(b("Result")))
+			),
+		        TR(
+		                td(center(a({-href=>'http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=7145702'}, 'Test Code'))),
+		                td(center(expand_PF($attrib_row->{TestCode}))),
+				td(center(sprintf("%.2f", $attrib_row->{TestScore})))
+		        ),
+		        TR(
+		                td(center(a({-href=>'http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=9183531'}, 'Gene Scan'))),
+		                td(center(expand_PF($attrib_row->{GeneScan}))),
+				td(center(sprintf("%.2f", $attrib_row->{GeneScanScore})))
+		        ),
+		        TR(
+		                td(center(a({-href=>'http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=3547335'}, 'Codon Preference'))),
+		                td(center(expand_PF($attrib_row->{CodonPreference}))),
+				td(center($attrib_row->{CodonPreferenceScore}))
+		        ),
+		        TR(
+		                td(center(a({-href=>'http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=2110097'}, 'Codon Usage*'))),
+		                td(center($attrib_row->{CodonUsage})),
+				td(center('n/a'))
+		        ),
+		        TR(
+		                td(center('Amino Acid Sequence Length')),
+		                td(center(length($trans_seq))),
+				td(center('n/a'))
+		        ),
+			TR(
+				td(center('Contig Coordinates')),
+				td(center($attrib_row->{contig} . ':' . $attrib_row->{start} . '..' . $attrib_row->{stop})),
+				td(center('n/a'))
+			)
+		);
+
+		print center('*Uses <a href="http://www.hgmp.mrc.ac.uk/Software/EMBOSS/Apps/cai.html">EMBOSS default</a> as reference: highly expressed <i>S. pombe</i> genes.<p>'), br, hr;
+
+		# Features
+
+		# PFAM Features
+		print center(h3("Features within Protein"));
+		print i("Cut-off for Pfam is an e-value of 0.0 or better"),p;
+		print '<table width="95%" border=1>';
+		my $pfam_hits = $mbl->get_orf_feature_results($orfid, 1);
+
+		if($pfam_hits->rows > 0)
+		{
+			print 	TR(
+					td(center(b("Type"))),
+					td(center(b("Feature"))),
+					td(center(b("Score/<br>E-Value"))),
+					td(center(b("Position")))
+				);
+		
+			while(my $row = $pfam_hits->fetchrow_hashref)
+			{
+				print 	"<tr>";
+				print 	"<td>" . $row->{db_name} . "</td>";
+				print "<td>";
+				if($row->{db_name} eq 'Pfam_ls')
+				{
+					print '<a href="http://pfam.wustl.edu/cgi-bin/getdesc?name=' . $row->{hit_name} . '">' . $row->{hit_name} . '</a>' . ': ' . $row->{description};
+				}elsif($row->{db_name} eq 'interpro')
+				{
+					print $row->{algorithms_name} . '|' .$row->{accession_number} . '|';
+					if( $row->{primary_id} eq undef || $row->{primary_id} eq "")
+					{
+						print   $row->{description};
+					} else
+					{
+						print '<a href="http://www.ebi.ac.uk/interpro/DisplayIproEntry?ac=' . $row->{primary_id} . '">' . $row->{description} . "</a>";
+					}
+				
+				} else
+				{
+					print $row->{algorithms_name} . '|' .$row->{accession_number} . '|' . $row->{description};
+				}
+				print "</td>";
+				print td(center($row->{evalue}));
+				print "<td>";
+				if($row->{db_name} eq 'Pfam_ls')
+				{
+					print center($mbl->show_blast_full_link($orfid, 'orf', 'Pfam_ls', $row->{query_start} . '..' . $row->{query_end}, $row->{hit_name}));
+				} else
+				{
+					print center( $row->{query_start} . '..' . $row->{query_end} );
+				}
+				print "</td>";
+				print "</tr>";		
+			}
+			
+
+			print '</table>', br,hr;
+		} else
+		{
+			print center(b("No Features Found")),br;
+		}
+
+
+		print center(h3("Precompiled Results"));
+
+		print   "<center><table border=0 cellspacing=5>\n";
+		print "<tr><td><ul><b>Blast Reports</b>";
+		if($mbl->check_orf_full_blast_report($orfid, 'swissprot'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'swissprot', 'BLASTP Search Against SwissProt'));	
+		}
+		if($mbl->check_orf_full_blast_report($orfid, 'nr'))
+		{
+			print li($mbl->show_blast_full_link($orfid, 'orf', 'nr', 'BLASTP Search Against Non-Redundant GenBank'));
+		}
+		if($mbl->check_orf_full_blast_report($orfid, 'Pfam_ls'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'Pfam_ls', 'HMM Search Against Pfam_ls'));
+		}
+
+		if($mbl->check_orf_full_blast_report($orfid, 'mitop'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'mitop', 'BLASTP Against MITOP Database'));
+		}
+		if($mbl->check_orf_full_blast_report($orfid, 'RefEuks'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'RefEuks', 'BLASTP Against RefEuks Database'));
+		}
+		if($mbl->check_orf_full_blast_report($orfid, 'protfun'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'protfun', 'ProtFun Results'));
+		}
+		if($mbl->check_orf_full_blast_report($orfid, 'tmhmm'))
+		{
+		        print li($mbl->show_blast_full_link($orfid, 'orf', 'tmhmm', 'TMHMM Results'));
+		}
+
+		print '</ul>';
+		print '<ul>';
+		print '<b>Alignments and Trees</b><br>';
+		if($mbl->get_alignment_links($orfid) ne 'None')
+		{
+			print li($mbl->get_alignment_links($orfid));
+		}
+
+		if ($mbl->get_tree_links($orfid) ne 'None') {
+			my $treeh = $dbh->prepare("select id, idname, ma_id, description from tree where idname = ?");
+			$treeh->execute($orfid);
+			while (my $tree_row = $treeh->fetchrow_hashref)
+			{
+				my $tree_id = $tree_row->{id};
+				my $ma_id = $tree_row->{ma_id};
+				my $tree_description = $tree_row->{description};
+				print "<li><a href=\"?page=ma&type=atv&id=$ma_id&noheader=T\" target=\"_new\">$tree_description</a></li>";
+			}
+		}
+		print '</ul>';
+
+
+		print "</td></tr></table></center><p>";
+
+
+		print br,hr;
+	}
+
+	print center(h3("Tools"));
+	if($mbl->check_orf_existance($orfid))
+	{
+		print   center($mbl->orf_multiple_alignment_button($orfid));
+	}
+	print 	center($mbl->gblast_form($sequence, 'blastn', $mbl->organism, 'BLAST NT Sequence Against Contigs', $orfid)),
+		center($mbl->gblast_form($trans_seq, 'blastp', $mbl->organism . '_orfs_aa', 'BLAST AA Sequence Against ORFs', $orfid)),
+		center($mbl->gblast_form($trans_seq, 'tblastn', $mbl->organism , 'BLAST AA Sequence Against Translated Contigs', $orfid) ),
+	        center($mbl->ncbi_blast($trans_seq, 'blastp', 'nr' , 'BLAST AA Sequence Against GenBank')),
+		;
+
+	if($mbl->check_annotation_admin_rights($session{'login_id'}))
+	{
+		print br,hr;
+		print center(h3("Administration Tools"));
+
+	print	center($mbl->orf_edit_form($orfid, "coordinates", "Edit Orf Coordinates")),
+		center($mbl->orf_edit_form($orfid, "del_re", "Delete/Reinstate")),
+	}
+} else
+{
+	# Print Nothing
+}
+sub expand_PF
+{
+	my $val = shift;
+	if($val eq 'P')
+	{
+		return 'Pass';
+	} elsif($val eq 'F')
+	{
+		return 'Fail'
+	} else
+	{
+		return 'Not Tested';
+	}
+
+}
+[% END %]

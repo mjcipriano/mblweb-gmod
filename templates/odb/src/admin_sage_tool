@@ -1,0 +1,424 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+use File::Temp qw/ tempfile tempdir /;
+
+$CGI::POST_MAX = 1024 * 10000;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+                                                                                                                                                                                                                                                   
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+	
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	
+	exit;
+}
+
+
+
+print   h1('SAGE Administration Tool');
+
+# Print out a menu of different sage tasks
+print 	table({-cellspacing=>8},
+		TR(
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_sage_admin_action=update_sage_results_form"}, "Upload Results")),
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_sage_admin_action=update_sage_names_form"}, "Library Names")),
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_sage_admin_action=update_sage_access"}, "User Access")),
+			
+		)
+	),p;
+
+if(param('gmoddb_sage_admin_action') eq 'update_sage_results_form')
+{
+
+	if(upload('sage_upload_file'))
+	{
+		my $upload_file = upload('sage_upload_file');
+		my $utr_est = param('sage_utr_estimation');
+		if(!$utr_est =~ /\d+/)
+		{
+			print "Unacceptable value for Sage UTR Estimation";
+			exit;
+		}
+		# Create temporary sage file
+		my ($sage_fh, $sage_fn) = tempfile();
+		my $lines = 0;
+		my $tagsize = 0;
+		my $num_libs = 0;
+		while(<$upload_file>)
+		{
+			print $sage_fh $_;
+			$lines++;
+			if($lines == 2)
+			{
+				my $line = $_;
+				my ($tagid, $seq, @libs) = split("\t", $line);
+				$tagsize = length($seq);
+				$num_libs = scalar(@libs);
+			}
+		}
+		close($sage_fh);
+		# Find the tagsize;
+		# Create temporary configuration file
+		my ($conf_fh, $conf_fn) = tempfile();
+		print $conf_fh "organism=" . $mbl->organism . "\n";
+		print $conf_fh "sage_dir=/\n";
+		print $conf_fh "sage_file=$sage_fn\n";
+		print $conf_fh "tagsize=$tagsize\n";
+		print $conf_fh "transcript_tail=$utr_est\n";
+		close($conf_fh);
+
+		my ($run_fh, $run_fn) = tempfile();
+		print $run_fh 	"create_sage_from_file = 1\n" .
+				"map_sage_to_db_mummer = 1\n" .
+				"calculate_sage_totals = 1\n" .
+				"map_sage_to_orf_secondary = 1\n" .
+				"map_sage_to_orf_tert = 1\n";
+		close($run_fh);
+		print "<b>Sage File Accepted.<br>$num_libs Libraries<br>Sage Tag size of $tagsize bases.<br></b>";
+		my $mblpipe_run = $mbl->mblpipe_dir . "/mblpipe --configuration=$conf_fn --runfile=$run_fn&";
+		system($mblpipe_run);
+		print $mblpipe_run;
+	} 
+	print 	h2("Upload Results File"),
+		start_multipart_form({-method=>'POST'}),
+	 	table(
+			TR(
+				td("Upload File:"), 
+				td(filefield(-name=>'sage_upload_file') )
+			),
+			TR(
+				td("Transcript 3' UTR estimation"),
+				td(textfield(-name=>'sage_utr_estimation', -value=>'200') )
+			)
+		),
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		hidden(-name=>'gmoddb_sage_admin_action', -value=>'update_sage_results_form'),
+		submit(),
+		end_form;
+
+} elsif(param('gmoddb_sage_admin_action') eq 'update_sage_names_form')
+{
+
+
+	# Check if there is an update action
+	if(param('updateme') eq 'Update')
+	{
+		# Find the information to update and update it.
+		my $lib = param('library');
+		my $old_library = param('old_library');
+		my $name = param('name');
+		my $short_name = param('short_name');
+		my $priority = param('priority');
+
+		my $updateh = $dbh->prepare("update sage_library_names set library = ?, name = ?, short_name = ?, priority = ? where library = ?");
+		$updateh->execute($lib, $name, $short_name, $priority, $old_library);
+		
+	} elsif(param('updateme') eq 'Insert')
+	{
+		my $lib = param('library');
+		my $old_library = param('old_library');
+		my $name = param('name');
+		my $short_name = param('short_name');
+		my $priority = param('priority');
+
+		my $updateh = $dbh->prepare("insert into sage_library_names (library, name, short_name, priority) VALUES ( ?, ?, ?, ?)");
+		$updateh->execute($lib, $name, $short_name, $priority);
+	} elsif(param('updateme') eq 'Delete')
+	{
+		my $lib = param('old_library');
+		my $updateh = $dbh->prepare("delete from sage_library_names where library = ?");
+		$updateh->execute($lib);
+	} elsif(param('updateme') eq 'Insert New Library')
+	{
+		my $lib = param('library');
+		my $old_library = param('library');
+		my $name = param('name');
+		my $short_name = param('short_name');
+		my $priority = param('priority');
+
+		my $updateh = $dbh->prepare("insert into sage_library_names (library, name, short_name, priority) VALUES ( ?, ?, ?, ?)");
+		$updateh->execute($lib, $name, $short_name, $priority);
+	}
+
+
+	# Find the current libraries defined either in the sage_library_names table or the sage_results table
+	my $sage_libs = $mbl->get_sage_libraries_array();
+
+	my $libshash;
+	# Go through the libraries and sort them by priority
+	foreach my $slib(@$sage_libs)
+	{
+		my $sage_info = $mbl->get_sage_library_info($slib);
+		if($sage_info)
+		{
+			$libshash->{$slib} = $sage_info->{priority};
+		} else
+		{
+			$libshash->{$slib} = 0;
+		}
+	}
+	# Sort it by priorty
+	my @sorted_libs = sort {$libshash->{$a} <=> $libshash->{$b} } keys %$libshash;
+
+	print 	start_form,
+		"<table border=1>",
+		TR(
+			td("Edit"), td("Lib"), td("Name"), td("Short Name"), td("Priority")
+		);
+
+	foreach my $slib(@sorted_libs)
+	{
+		my $sage_info = $mbl->get_sage_library_info($slib);
+		if($sage_info)
+		{
+			print TR(
+				td( submit( -name=>'gmoddb_sage_admin_edit_name', -value=>$sage_info->{library}) ), 
+				td($sage_info->{library}), 
+				td($sage_info->{name}), 
+				td($sage_info->{short_name}), 
+				td($sage_info->{priority})
+			);
+		} else
+		{
+			print TR(
+				td(submit( -name=>'gmoddb_sage_admin_edit_name', -value=>$slib ) ), td($slib), td(), td(), td()
+			);
+		}
+	}
+
+	print	"</table>",
+		submit( -name=>'gmoddb_sage_admin_edit_name', -value=>'New Library') ,
+		hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'page', -value=>param('page')),
+		end_form;
+
+} elsif(param('gmoddb_sage_admin_edit_name'))
+{
+	my $lib = param('gmoddb_sage_admin_edit_name');
+	my $sage_info = $mbl->get_sage_library_info($lib);
+	if($lib eq "New Library")
+	{
+		print 	h2("Update Library Name"),
+			start_form,
+			table( {-border=>1},
+				TR(
+					td( "Library" ), td( textfield(-name=>"library") )
+				),
+				TR(
+					td( "Name" ), td(textfield(-name=>"name" ) )
+				),
+				TR(
+					td( "Short Name" ), td(textfield(-name=>"short_name") )
+				),
+				TR(
+					td( "Priority" ), td(textfield(-name=>"priority") )
+				)
+			),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>"old_library", -value=>'none'),
+			hidden(-name=>'page', -value=>param('page')),
+			hidden(-name=>'gmoddb_sage_admin_action', -value=>'update_sage_names_form'),
+			submit(-name=>'updateme', -value=>'Insert New Library');
+
+	} elsif($sage_info)
+	{
+		print 	h2("Update Library Name"),
+			start_form,
+			table( {-border=>1},
+				TR(
+					td( "Library" ), td( textfield(-name=>"library", -value=>$sage_info->{library}) )
+				),
+				TR(
+					td( "Name" ), td(textfield(-name=>"name", -value=>$sage_info->{name}) )
+				),
+				TR(
+					td( "Short Name" ), td(textfield(-name=>"short_name", -value=>$sage_info->{short_name}) )
+				),
+				TR(
+					td( "Priority" ), td(textfield(-name=>"priority", -value=>$sage_info->{priority}) )
+				)
+			),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>"old_library", -value=>$lib),
+			hidden(-name=>'page', -value=>param('page')),
+			hidden(-name=>'gmoddb_sage_admin_action', -value=>'update_sage_names_form'),
+			submit(-name=>'updateme', -value=>"Update"),
+			submit(-name=>'updateme', -value=>"Delete");
+	} else
+	{
+		print 	h2("Update Library Name"),
+			start_form,
+			table( {-border=>1},
+				TR(
+					td( "Library" ), td( textfield(-name=>"library", -value=>$lib) )
+				),
+				TR(
+					td( "Name" ), td(textfield(-name=>"name" ) )
+				),
+				TR(
+					td( "Short Name" ), td(textfield(-name=>"short_name") )
+				),
+				TR(
+					td( "Priority" ), td(textfield(-name=>"priority") )
+				)
+			),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>"old_library", -value=>$lib),
+			hidden(-name=>'page', -value=>param('page')),
+			hidden(-name=>'gmoddb_sage_admin_action', -value=>'update_sage_names_form'),
+			submit(-name=>'updateme', -value=>'Insert');
+
+	}
+} elsif(param('gmoddb_sage_admin_action') eq 'Update Sage Names')
+{
+	print "Libs <br>";
+	# Update the names based on what is given
+	my $libs = param('$libname');
+	while(my ($key, $val) = each(%$libs))
+	{
+		print "$key $val<br>";
+	}
+	print "Paramaters<br>";
+	my @params = param();
+	foreach my $pa (@params)
+	{
+		print "$pa " . param($pa) . "<br>";
+	}
+	print "Done";
+} elsif(param('gmoddb_sage_admin_action') eq 'update_sage_access')
+{
+	my $users_h = $dbh->prepare("select id, user_name, first_name, active_fg, email, institution from user order by user_name");
+	my $user_sage_h = $dbh->prepare("select distinct id, userid, rights, type from user_rights where type = 'sage_library_access' AND userid = ? order by rights");
+	my $new_user_lib_h = $dbh->prepare("insert into user_rights (id, userid, rights, type) VALUES (NULL, ?, ?, 'sage_library_access')");
+	my $del_user_lib_h = $dbh->prepare("delete from user_rights where userid = ? AND rights = ? AND type = 'sage_library_access'");
+
+	if(param('gmoddb_sage_access_update') eq 'Update Access')
+	{
+		# Check for the existance of each of the user checkboxes and see what is different
+		$users_h->execute();
+		while(my $userrow = $users_h->fetchrow_hashref)
+		{
+			my $user_param = 'user_' . $userrow->{id};
+			if(param($user_param))
+			{
+				print b($userrow->{user_name}) . "<br>";
+				# This user has an entry
+				# Create a hash for each library that this user already has access to
+				$user_sage_h->execute($userrow->{id});
+				my %user_lib_hash;
+				while(my $accrow = $user_sage_h->fetchrow_hashref)
+				{
+					$user_lib_hash{$accrow->{rights}} = 1;
+				}
+				# Now while iterating through this list, insert one's that are not in the original list and track all those seen
+				my %libseen;
+				my @libs_access = param($user_param);
+				foreach my $lib (@libs_access)
+				{
+					if(defined($user_lib_hash{$lib}))
+					{
+						# Do nothing, just track that I've seen this
+						$libseen{$lib} = 1;
+					} else
+					{
+						# This lib is a new one, insert it;
+						$new_user_lib_h->execute($userrow->{id}, $lib);
+						print " Add $lib<br>";
+						$libseen{$lib} = 1;
+					}
+				}
+				# Now iterate through all the original libs and  if they are not seen, delete them
+				foreach my $lib(keys %user_lib_hash)
+				{
+					if(defined($libseen{$lib}))
+					{
+						# We are good, nothing to do
+					} else
+					{
+						# Delete this lib
+						$del_user_lib_h->($userrow->{id}, $lib);
+						print " Delete $lib<br>";
+					}
+				}
+
+			}
+		}
+
+	}
+
+	$users_h->execute();
+
+	# Create Update Form
+	print start_form({-method=>'POST'});
+	# Create a table
+	print "<table border=1='><tr><td>User Name</td><td>Libraries</td></tr>\n";
+	# Create a label hash which is lib->library_name (or lib if that is all there is) TODO
+	my $label_hash;
+	my $libraries = $mbl->get_sage_libraries_array;
+	foreach my $lib (@$libraries)
+	{
+		# Get the library name if it exists
+		my $lib_info = $mbl->get_sage_library_info($lib);
+		if($lib_info)
+		{
+		
+			$label_hash->{$lib} = $lib_info->{name};
+		} else
+		{
+			$label_hash->{$lib} = $lib;
+		}
+	}
+	
+	while(my $userrow = $users_h->fetchrow_hashref)
+	{
+		$user_sage_h->execute($userrow->{id});
+		print "<tr><td>" . $userrow->{user_name} . "</td><td>";
+		# Put all of the rights this person has in an array
+		my $rights_array;
+		while(my $rightsrow = $user_sage_h->fetchrow_hashref)
+		{
+			push(@$rights_array, $rightsrow->{rights});
+		}
+			print checkbox_group(-name=>'user_' . $userrow->{id}, -values=>$libraries, -defaults=>$rights_array, -labels=>$label_hash, -columns=>1);
+		print "</td></tr>\n";
+	}
+	print 	"</table>\n",
+        	hidden(-name=>'organism', -value=>$mbl->organism),
+       		hidden(-name=>'page', -value=>param('page')),
+		hidden(-name=>'gmoddb_sage_admin_action', -value=>'update_sage_access'),
+		submit(-name=>'gmoddb_sage_access_update', -value=>'Update Access');
+
+	print end_form;
+} else
+{
+	print h2("Pick an action in the above menu");
+}
+
+
+untie(%session);
+[% END %]

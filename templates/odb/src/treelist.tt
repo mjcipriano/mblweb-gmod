@@ -1,0 +1,25 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+<center>
+<table border="0" cellspacing="0" width="100%">
+        <tr>
+                <td>
+        <center><h2>Phylogenetic Trees</h2></center>
+                </td>
+        </tr>
+        <tr>
+                <td><br></td>
+        </tr>
+ 
+</table>
+</center>
+
+<br>
+[% INCLUDE treelist %]
+<p>&nbsp;
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

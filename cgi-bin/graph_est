@@ -1,0 +1,151 @@
+#!/usr/bin/perl
+#########################################
+#
+# graph_est, create output graph for webpages, plotting
+#			#singlets, #contigs, #supercontigs
+#			against number of reads.
+#
+# Usage:  called from update_stats.pl
+#
+# Author: Susan Huse, shuse@mbl.edu  Date: September 2005
+# 
+# Assumptions:
+#
+# Revisions:
+#
+# Programming Notes:
+#
+########################################
+
+use strict;
+
+use CGI qw(:all);
+use GD;
+use Mbl;
+use GD::Graph::lines;
+use GD::Graph::linespoints;
+use GD::Graph::bars;
+use Data::Dumper;
+
+
+my $mbl = Mbl::new(undef, param('organism'));
+#my $mbl = Mbl::new(undef, "acantha");
+my $dbh = $mbl->dbh();
+
+# Select all the reads and their contig, supercontig assignment
+my $reads_h = $dbh->prepare("SELECT read_name, reads_assembly.contig_number, super_id FROM reads_assembly, links WHERE reads_assembly.contig_number = links.contig_number ORDER BY read_name ASC");
+$reads_h->execute();
+
+#get the total number of reads
+#create 25 xy data pairs for the graph
+my $reads_count = $dbh->prepare("SELECT count(read_name) as totalreads FROM reads_assembly");
+$reads_count->execute();
+my $totalreads = $reads_count->fetchrow_array();
+my $x_increment = int ( ($totalreads / 25) + 0.9); #Round up
+
+my $i=1;
+my $x_value=1;
+my %reads;
+my %clones;
+my %contigs;
+my %supercontigs;
+my $singletons;
+my %yvalues;
+my @data_clones;
+my @data_reads;
+my @data_contigs;
+my @data_supercontigs;
+my @data_singletons;
+my @data_xval;
+
+#For each row, add hash element as counting mechanism
+while (my $row = $reads_h->fetchrow_hashref) 
+{
+	my $read_name = $row->{'read_name'};
+	$clones{substr($read_name, 1, 13)}++;
+	$reads{$row->{'read_name'}}++;
+	$contigs{$row->{'contig_number'}}++;
+	$supercontigs{$row->{'super_id'}}++;
+
+	$i++;
+	if ($i > $x_increment) #add to the yvalues hash the data for this x
+	{
+		$singletons=0;
+		for my $c (%contigs) 
+		{
+			if ($c == 1) { 
+				$singletons++;
+			}
+		}
+		$yvalues{$x_value} = [scalar keys (%clones), scalar keys (%reads), scalar keys (%contigs), scalar keys (%supercontigs), $singletons, $x_value];
+
+		$i=1;
+		$x_value += 1;
+	}
+}
+
+if ($x_value == 25)  #hasn't been incremented to 26
+{
+	#populate final xvalue
+	$singletons=0;
+	for my $c (%contigs) 
+	{
+		if ($c == 1) { 
+			$singletons++;
+		}
+	}
+	$yvalues{$x_value} = [scalar keys (%clones), scalar keys (%reads), scalar keys (%contigs), scalar keys (%supercontigs), $singletons, $x_value];
+}
+
+for (my $x=1; $x<=25; $x +=1)
+{
+#	push (@data_clones, $yvalues{$x}[0]);
+	push (@data_reads, $yvalues{$x}[1]);
+	push (@data_contigs, $yvalues{$x}[2]);
+	push (@data_supercontigs, $yvalues{$x}[3]);
+	push (@data_singletons, $yvalues{$x}[4]);
+}
+
+my @data = (\@data_reads, \@data_contigs, \@data_supercontigs, \@data_singletons);
+
+
+binmode STDOUT;
+
+my $max = int ((scalar keys (%reads)) * 1.1 / 1000) * 1000;
+my $min = 0;
+my $width = 400;
+my $height = 200;
+if(param('width')) { $width = param('width'); }
+if(param('height')) { $height = param('height'); }
+
+
+my $graph = GD::Graph::lines->new( $width, $height );
+
+$graph->set( 
+      x_label           => 'Number of Reads used in assembly',
+      y_label           => 'Numbers of Assemblages',
+      title             => 'EST Assembly',
+      x_tick_number	=> 5,
+      x_min_value       => 0,
+      x_label_position => 0.5,
+#      x_max_value       => $max,
+#      y_max_value       => $max,
+#      y_tick_number     => 10,
+#      y_label_skip      => 0,
+#      x_labels_vertical =>0,
+#      x_label_skip	=>$x_increment,
+#      box_axis		=>0
+  ) or warn $graph->error;
+
+$graph->set_legend('# Contigs', '# Supercontigs', '# Singletons');
+
+print header( -type => "image/png", -expires => "-1d" );
+my $gd = $graph->plot(\@data) or die $graph->error;
+
+#open (IMG, '>estgraph.gif') or die $!;
+#binmode IMG;
+#print IMG $gd->gif;
+#close IMG;
+#
+print $gd->png;
+

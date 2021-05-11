@@ -1,0 +1,18 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $id = param('id');
+
+
+print $mbl->modify_tree_string($mbl->get_stored_tree_string($id)); 
+
+[% END %]

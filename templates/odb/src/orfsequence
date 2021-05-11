@@ -1,0 +1,121 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $orfid;
+if(param('orf') =~ /^orf\:/)
+{
+	($orfid) = param('orf') =~ /^orf\:(\d+)/;
+} else
+{
+	$orfid = param('orf');
+}
+
+if($mbl->check_orf_existance($orfid, 1))
+{
+	if($mbl->check_orf_existance($orfid))
+	{
+		print center(h3("Sequence")); 
+	} else
+	{
+		print center(h3("Sequence May Not Match Current Assembly"));
+	}
+	my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+	my $sequence = $mbl->get_orf_nt_sequence($orfid);
+	my $trans_seq = $mbl->get_orf_aa_sequence($orfid);
+
+
+	# Get flanking region, 3' and 5' if part of a contig
+	if($attrib_row->{contig} ne undef)
+	{
+		my $flank_start = $attrib_row->{start} - 200;
+		my $flank_stop = $attrib_row->{stop} + 200;
+		if($flank_start <= 0)
+		{
+			$flank_start = 1;
+		}
+
+		my $fiveprime;
+		my $threeprime;
+
+		# Do 5' end
+		my $subseq = $mbl->get_region($attrib_row->{contig}, $flank_start, $attrib_row->{start} - $flank_start); 	
+		if($attrib_row->{direction} eq '+')
+		{
+			$fiveprime = $subseq;
+		} else
+		{
+			$threeprime = $subseq;
+		}
+
+
+		# Do 3' end
+		my $subseq = $mbl->get_region($attrib_row->{contig}, $attrib_row->{stop} + 1, $flank_stop - $attrib_row->{stop});
+		if($attrib_row->{direction} eq '+')
+		{
+			$threeprime = $subseq;
+		} else
+		{
+			$fiveprime = $subseq;
+		}
+
+		# reverse complement if it is in - direction;
+
+		if($attrib_row->{direction} eq '-')
+		{
+			$threeprime =~ tr/ATGCatgc/TACGtacg/;
+			$threeprime = reverse($threeprime);
+			$fiveprime =~ tr/ATGCatgc/TACGtacg/;
+			$fiveprime = reverse($fiveprime);
+		}
+
+		$threeprime = join("\n", split /(.{80})/, $threeprime);
+		$threeprime =~ s/\n\n/\n/g;
+		$fiveprime = join("\n", split /(.{80})/, $fiveprime);
+		$fiveprime =~ s/\n\n/\n/g;
+		my $sequence_string = join("\n", split /(.{80})/, $sequence);
+		$sequence_string =~ s/\n\n/\n/g;
+		$trans_seq = join("\n", split /(.{80})/, $trans_seq);
+		$trans_seq =~ s/\n\n/\n/g;
+
+		print 	pre(">orf:$orfid 200 bp of 5' flanking nucleotide sequence",  uc($fiveprime)),p,
+			pre(">orf:$orfid coding nucleotide sequence",  uc($sequence_string)),p,
+			pre(">orf:$orfid 200 bp of 3' flanking nucleotide sequence",  uc($threeprime)),p,
+			pre(">orf:$orfid predicted amino acid sequence",  uc($trans_seq)),p;
+	
+
+	} else
+	{
+		my $sequence_string = join("\n", split /(.{80})/, $sequence);
+		$sequence_string =~ s/\n\n/\n/g;
+
+		$trans_seq = join("\n", split /(.{80})/, $trans_seq);
+
+		$trans_seq =~ s/\n\n/\n/g;
+		print 	pre(">orf:$orfid coding nucleotide sequence",  uc($sequence_string)),p,
+			pre(">orf:$orfid predicted amino acid sequence",  uc("\n" . $trans_seq)),p;	
+	}
+} else
+{
+	# Print Nothing
+}
+
+
+[% END %]

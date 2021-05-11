@@ -1,0 +1,42 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+</table>
+		[% html_top %]
+<br>
+<i>Click on the following links to download compressed (gzip) data files. Warning, file sizes can be very large.</i>
+		<ul>
+                        <li><a href="?page=download_tool&file=contigs&type=assembly&noheader=T">Contig Consensus Sequence</a> (FASTA format)
+			<li><a href="?page=download_tool&file=orfs&type=orfs&noheader=T">Predicted Open Reading Frame Sequences (nucleotides)</a> (FASTA format)
+			<li><a href="?page=download_tool&file=orfs_aa&type=orfs&noheader=T">Predicted Open Reading Frame Sequences (translated)</a> (FASTA format)
+			<li><a href="?page=download_tool&file=used_reads&type=assembly&noheader=T">All Sequence Reads Included in Assembly</a> (FASTA format) 
+			<li><a href="?page=download_tool&file=unused_reads&type=assembly&noheader=T">All Sequence Reads Not Included in Assembly</a> (FASTA format)
+                        <li><a href="?page=download_tool&file=orf_coord&type=orfs&noheader=T">Coordinates of ORFs relative to Contigs</a> (tab-delimited text file)
+                        <li><a href="?page=download_tool&file=contig_info&type=assembly&noheader=T">Contig Assembly Information</a> (tab-delimited text file)
+                        <li><a href="?page=download_tool&file=supercontig_info&type=assembly&noheader=T">Supercontig Assembly Information</a> (tab-delimited text file)
+<!--			<li><a href="?page=download_tool&file=sage&type=sage&noheader=T">Raw Serial Analysis of Gene Expression Data</a> (tab-delimited text file) (<a href="?page=login">login</a> required) -->
+		</ul>
+
+
+<table border=0 width="100%" >
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+

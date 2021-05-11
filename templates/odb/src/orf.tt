@@ -1,0 +1,90 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center><br>
+			[% INCLUDE orf_searchtool default_search='orf:' footer_text='<br><small><i>Search for specific ORFs or ORF annotation.<br>Examples: orf:114787, ornithine, sagetag:33210</i></small>' %]<p>
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+			<br>
+			[% html_leftcolumn %]
+
+		</td>
+		<td width="4%"></td>
+		<td width="48%" valign="top">
+			<table width="100%" class="databody" cellspacing=0>
+				<tr>
+					<td>
+						<center><h1>ORF Prediction Statistics</h1></center><p>
+					</td>
+				</tr>
+				<tr>
+					<td>	<center>	
+                                                <form action="[% html_site_cgi %]/[% database_name %]">
+                                                <input type="hidden" name="page" value="orfanalysis">
+                                                <input type="submit" name="type" value="Advanced ORF Search Tool">
+                                                </form></center>
+					</td>
+				</tr>
+				<tr>
+					<td>	<center>
+						[% INCLUDE bulkupload %]
+                                                </form><hr></center>
+					</td>
+				</tr>
+				<tr>
+					<td>
+						<center>
+							<h3>ORF Numbers</h3>
+							<p>BLAST statistics are for BLASTP against non-redundant GenBank peptides.</p>
+							[% orf_datasnapshot %] 
+							<hr>
+							<h3>ORF Diversity</h3>
+<p><center>The <b>Codon Usage Bias</b>
+statistic is that of <a href="http://www.ncbi.nlm.nih.gov:80/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=2110097">Wright (1990)</a>, with values from 20, in the case of extreme bias where
+one codon is exclusively used for each amino acid, to 61 when the use of
+alternative synonymous codons is equally likely.</center></p>
+							[% orfsequencelength_image %]<p><hr width = "50%">
+							[% orfgc_image %] <p><hr width = "50%">
+							[% orfcodonusage_image %]<p><hr width = "50%">
+						</center>
+					</td>
+				</tr>
+				<tr>
+					<td>
+						[% html_rightcolumn %]
+					</td>
+				</tr>
+			</table>
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

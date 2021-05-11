@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+
+use strict;
+
+use CGI qw(:all);
+use GD;
+use Mbl;
+use GD::Graph::lines;
+use GD::Graph::bars;
+
+
+my $mbl = Mbl::new(undef, param('organism'));
+my $dbh = $mbl->dbh();
+
+my $read_name = param('read_name');
+
+my @data;
+my $qual = $mbl->get_read_qual_array($read_name);
+my $tmp;
+my $num = 1;
+
+foreach my $q (@{$qual})
+{
+	push(@{$tmp}, $num);
+	$num++;
+}
+
+push(@data, $tmp);
+push(@data, $qual);
+
+
+
+@data = ( $tmp, $qual);
+
+binmode STDOUT;
+
+my $max = 70;
+my $min = 0;
+my $width = 800;
+my $height = 200;
+
+
+if(param('width'))
+{
+	$width = param('width');
+}
+if(param('height'))
+{
+	$height = param('height');
+}
+
+
+
+#my $graph = GD::Graph::linespoints->new( 600, 200 );
+my $graph = GD::Graph::lines->new( $width, $height );
+
+
+$graph->set( 
+      x_label           => 'Base Position',
+      y_label           => 'Quality Value',
+      title             => 'Read Quality for ' . $read_name,
+      y_max_value       => $max,
+      y_tick_number     => 10,
+      y_label_skip      => 0,
+      x_labels_vertical =>0,
+      x_label_skip	=>50,
+      x_label_position	=>.5,
+      box_axis		=>0
+  );
+
+
+print header( -type => "image/png", -expires => "-1d" );
+my $gd = $graph->plot(\@data);
+
+
+
+print $gd->png;
+

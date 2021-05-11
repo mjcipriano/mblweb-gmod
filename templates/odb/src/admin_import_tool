@@ -1,0 +1,554 @@
+[% PERL %]
+
+use strict;
+use Template;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Mbl;
+use Apache;
+use Apache::Session::File;
+use File::Temp qw/ tempfile tempdir /;
+
+$CGI::POST_MAX = 1024 * 10000;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+my $session_id = $stash->get('session_id');
+
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+# Check for login
+
+if($session{login_id} && $mbl->check_annotation_admin_rights($session{login_id}))
+{
+
+} elsif(!$session{login_id})
+{
+	print "You have not logged in, please login and return to this page";
+	exit;
+} else
+{
+	exit;
+}
+
+
+
+print   h1('Sequence Data Import Administration Tool');
+
+# Print out a menu of different tasks
+print 	table({-cellspacing=>8},
+		TR(
+			td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data"}, "Import Data")),
+			
+		)
+	),p;
+
+if(param('gmoddb_import_admin_action') eq 'import_data')
+{
+
+	if(upload('import_upload_file'))
+	{
+	} 
+	print 	h2("Import Sequence Data");
+	print h3("Choose the type of data you would like to import");
+	
+	print 	table({-cellspacing=>8},
+			TR(
+				td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data&gmoddb_import_admin_type=fasta"}, "Fasta")),
+				td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data&gmoddb_import_admin_type=none"}, "Genbank")),
+				td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data&gmoddb_import_admin_type=none"}, "Ace")),
+				td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data&gmoddb_import_admin_type=arachne"}, "ARACHNE")),
+				td(a({-href=>"?page=" . param('page') . "&gmoddb_import_admin_action=import_data&gmoddb_import_admin_type=none"}, "AMOS")),
+				
+			)
+		),p;
+
+
+	if(param('gmoddb_import_admin_type') eq 'fasta')
+	{
+		if(param('fasta_upload_file'))
+		{
+			# TODO: Check that file given is a fasta file
+
+			# Create tempfile
+			my ($fasta_fh, $fasta_fn) = tempfile();	
+			my $upload_fasta_file = upload('fasta_upload_file');
+
+			# Move the temp fasta file to the temporary directory
+			while(<$upload_fasta_file>)
+			{
+				print $fasta_fh $_;
+			}
+
+			# Get the script that does the importing
+			my $import_fasta_bin = $mbl->mblpipe_dir . "/import/fasta/fasta2gmod.pl " . $mbl->organism . " " . $fasta_fn;	
+			# Check the Append/delete options
+			
+
+			if(param('gmoddb_import_admin_fasta_doption') eq 'Append to existing Assembly')
+			{
+				system($import_fasta_bin . '&');			
+			} elsif( param('gmoddb_import_admin_fasta_doption') eq 'Append only unique sequences into existing Assembly')
+			{
+				# TODO: Iterate through the sequences and insert only those that are not included already as a contig.
+				my ($single_fh, $single_fn) = tempfile();
+				my $seqs = Bio::SeqIO->new(-file=>$fasta_fn, -format=>'fasta');
+				while(my $cur_seq = $seqs->next_seq)
+				{
+					# Check if it is unique
+					my $unique = 1;
+					if($unique)
+					{
+						# Create the temp file with this seq
+						# Import the data
+				
+					}
+				}
+			} elsif( param('gmoddb_import_admin_fasta_doption') eq 'Delete existing Assembly')
+			{
+				# Delete all assembly tables;
+				# annotation blast_report_full blast_results contig_quality contigs links reads reads_assembly reads_bases reads_quality 
+				$dbh->do("delete from contig");
+				$dbh->do("delete from contig_quality");
+				$dbh->do("delete from links");
+				$dbh->do("delete from reads");
+				$dbh->do("delete from reads_assembly");
+				$dbh->do("delete from reads_bases");
+				$dbh->do("delete from reads_quality");
+				# Execute the import
+				system($import_fasta_bin . '&');
+			}
+ 
+			print "File is being imported.";
+			print "Options: " . param('gmoddb_import_admin_fasta_doption'); 
+
+		} else
+		{
+	
+			print	start_multipart_form({-method=>'POST'}),
+			 	table(
+					TR(
+						td("Fasta File:"), 
+						td(filefield(-name=>'fasta_upload_file') )
+					),
+					TR(
+						td("Delete/Append Options"),
+						td(popup_menu(-name=>'gmoddb_import_admin_fasta_doption', -values=>['Append to existing Assembly', 'Append only unique sequences into existing Assembly', 'Delete existing Assembly'])       )
+					)
+				),
+				hidden(-name=>'organism', -value=>$mbl->organism),
+				hidden(-name=>'page', -value=>param('page')),
+				hidden(-name=>'gmoddb_import_admin_type', -value=>'fasta'),
+				hidden(-name=>'gmoddb_import_admin_action', -value=>'import_data'),
+				submit(),
+				end_form;
+		}
+
+	} elsif(param('gmoddb_import_admin_type') eq 'embl')
+	{
+		if(param('embl_upload_file'))
+		{
+			# TODO: Check that file given is a embl file
+
+			# Create tempfile
+			my ($embl_fh, $embl_fn) = tempfile();	
+			my $upload_embl_file = upload('embl_upload_file');
+
+			# Move the temp embl file to the temporary directory
+			while(<$upload_embl_file>)
+			{
+				print $embl_fh $_;
+			}
+
+			# Get the script that does the importing
+			my $import_embl_bin = $mbl->mblpipe_dir . "/import/embl/embl2gmod.pl " . $mbl->organism . " " . $embl_fn;	
+			# Check the Append/delete options
+			
+
+			if(param('gmoddb_import_admin_doption') eq 'Append to existing Assembly')
+			{
+				system($import_embl_bin . '&');			
+			} elsif( param('gmoddb_import_admin_doption') eq 'Append only unique sequences into existing Assembly')
+			{
+				# TODO: Iterate through the sequences and insert only those that are not included already as a contig.
+				my ($single_fh, $single_fn) = tempfile();
+				my $seqs = Bio::SeqIO->new(-file=>$embl_fn, -format=>'embl');
+				while(my $cur_seq = $seqs->next_seq)
+				{
+					# Check if it is unique
+					my $unique = 1;
+					if($unique)
+					{
+						# Create the temp file with this seq
+						# Import the data
+				
+					}
+				}
+			} elsif( param('gmoddb_import_admin_doption') eq 'Delete existing Assembly')
+			{
+				# Delete all assembly tables;
+				# annotation blast_report_full blast_results contig_quality contigs links reads reads_assembly reads_bases reads_quality 
+				$dbh->do("delete from contig");
+				$dbh->do("delete from contig_quality");
+				$dbh->do("delete from links");
+				$dbh->do("delete from reads");
+				$dbh->do("delete from reads_assembly");
+				$dbh->do("delete from reads_bases");
+				$dbh->do("delete from reads_quality");
+				# Execute the import
+				system($import_embl_bin . '&');
+			}
+ 
+			print "File is being imported.";
+			print "Options: " . param('gmoddb_import_admin_doption'); 
+
+		} else
+		{
+	
+			print	start_multipart_form({-method=>'POST'}),
+			 	table(
+					TR(
+						td("EMBL File:"), 
+						td(filefield(-name=>'embl_upload_file') )
+					),
+					TR(
+						td("Delete/Append Options"),
+						td(popup_menu(-name=>'gmoddb_import_admin_doption', -values=>['Append to existing Assembly', 'Append only unique sequences into existing Assembly', 'Delete existing Assembly'])       )
+					)
+				),
+				hidden(-name=>'organism', -value=>$mbl->organism),
+				hidden(-name=>'page', -value=>param('page')),
+				hidden(-name=>'gmoddb_import_admin_type', -value=>'embl'),
+				hidden(-name=>'gmoddb_import_admin_action', -value=>'import_data'),
+				submit(),
+				end_form;
+		}
+
+	} elsif(param('gmoddb_import_admin_type') eq 'genbank')
+	{
+		if(param('gb_upload_file'))
+		{
+			# TODO: Check that file given is a genbank file
+
+			# Create tempfile
+			my ($gb_fh, $gb_fn) = tempfile();	
+			my $upload_gb_file = upload('gb_upload_file');
+
+			# Move the temp genbank file to the temporary directory
+			while(<$upload_gb_file>)
+			{
+				print $gb_fh $_;
+			}
+
+			# Get the script that does the importing
+			my $import_gb_bin = $mbl->mblpipe_dir . "/import/genbank/genbank2gmod.pl " . $mbl->organism . " " . $gb_fn;	
+			# Check the Append/delete options
+			
+
+			if(param('gmoddb_import_admin_doption') eq 'Append to existing Assembly')
+			{
+				system($import_gb_bin . '&');			
+			} elsif( param('gmoddb_import_admin_doption') eq 'Append only unique sequences into existing Assembly')
+			{
+				# TODO: Iterate through the sequences and insert only those that are not included already as a contig.
+				my ($single_fh, $single_fn) = tempfile();
+				my $seqs = Bio::SeqIO->new(-file=>$gb_fn, -format=>'gb');
+				while(my $cur_seq = $seqs->next_seq)
+				{
+					# Check if it is unique
+					my $unique = 1;
+					if($unique)
+					{
+						# Create the temp file with this seq
+						# Import the data
+				
+					}
+				}
+			} elsif( param('gmoddb_import_admin_doption') eq 'Delete existing Assembly')
+			{
+				# Delete all assembly tables;
+				# annotation blast_report_full blast_results contig_quality contigs links reads reads_assembly reads_bases reads_quality 
+				$dbh->do("delete from contig");
+				$dbh->do("delete from contig_quality");
+				$dbh->do("delete from links");
+				$dbh->do("delete from reads");
+				$dbh->do("delete from reads_assembly");
+				$dbh->do("delete from reads_bases");
+				$dbh->do("delete from reads_quality");
+				# Execute the import
+				system($import_gb_bin . '&');
+			}
+ 
+			print "File is being imported.";
+			print "Options: " . param('gmoddb_import_admin_doption'); 
+
+		} else
+		{
+	
+			print	start_multipart_form({-method=>'POST'}),
+			 	table(
+					TR(
+						td("Genbank File:"), 
+						td(filefield(-name=>'gb_upload_file') )
+					),
+					TR(
+						td("Delete/Append Options"),
+						td(popup_menu(-name=>'gmoddb_import_admin_doption', -values=>['Append to existing Assembly', 'Append only unique sequences into existing Assembly', 'Delete existing Assembly'])       )
+					)
+				),
+				hidden(-name=>'organism', -value=>$mbl->organism),
+				hidden(-name=>'page', -value=>param('page')),
+				hidden(-name=>'gmoddb_import_admin_type', -value=>'gb'),
+				hidden(-name=>'gmoddb_import_admin_action', -value=>'import_data'),
+				submit(),
+				end_form;
+		}
+
+	} elsif(param('gmoddb_import_admin_type') eq 'ace')
+	{
+		if(param('ace_upload_file'))
+		{
+			# TODO: Check that file given is a ace file
+
+			# Create tempfile
+			my ($ace_fh, $ace_fn) = tempfile();	
+			my $upload_ace_file = upload('ace_upload_file');
+
+			# Move the temp ace file to the temporary directory
+			while(<$upload_ace_file>)
+			{
+				print $ace_fh $_;
+			}
+
+			# Get the script that does the importing
+			my $import_ace_bin = $mbl->mblpipe_dir . "/import/ace/ace2gmod.pl " . $mbl->organism . " " . $ace_fn;	
+			# Check the Append/delete options
+			
+
+			if(param('gmoddb_import_admin_doption') eq 'Append to existing Assembly')
+			{
+				system($import_ace_bin . '&');			
+			} elsif( param('gmoddb_import_admin_doption') eq 'Append only unique sequences into existing Assembly')
+			{
+				# TODO: Iterate through the sequences and insert only those that are not included already as a contig.
+				my ($single_fh, $single_fn) = tempfile();
+				my $seqs = Bio::SeqIO->new(-file=>$ace_fn, -format=>'ace');
+				while(my $cur_seq = $seqs->next_seq)
+				{
+					# Check if it is unique
+					my $unique = 1;
+					if($unique)
+					{
+						# Create the temp file with this seq
+						# Import the data
+				
+					}
+				}
+			} elsif( param('gmoddb_import_admin_doption') eq 'Delete existing Assembly')
+			{
+				# Delete all assembly tables;
+				# annotation blast_report_full blast_results contig_quality contigs links reads reads_assembly reads_bases reads_quality 
+				$dbh->do("delete from contig");
+				$dbh->do("delete from contig_quality");
+				$dbh->do("delete from links");
+				$dbh->do("delete from reads");
+				$dbh->do("delete from reads_assembly");
+				$dbh->do("delete from reads_bases");
+				$dbh->do("delete from reads_quality");
+				# Execute the import
+				system($import_ace_bin . '&');
+			}
+ 
+			print "File is being imported.";
+			print "Options: " . param('gmoddb_import_admin_doption'); 
+
+		} else
+		{
+	
+			print	start_multipart_form({-method=>'POST'}),
+			 	table(
+					TR(
+						td("ACE File:"), 
+						td(filefield(-name=>'ace_upload_file') )
+					),
+					TR(
+						td("Delete/Append Options"),
+						td(popup_menu(-name=>'gmoddb_import_admin_doption', -values=>['Append to existing Assembly', 'Append only unique sequences into existing Assembly', 'Delete existing Assembly'])       )
+					)
+				),
+				hidden(-name=>'organism', -value=>$mbl->organism),
+				hidden(-name=>'page', -value=>param('page')),
+				hidden(-name=>'gmoddb_import_admin_type', -value=>'ace'),
+				hidden(-name=>'gmoddb_import_admin_action', -value=>'import_data'),
+				submit(),
+				end_form;
+		}
+
+	} elsif(param('gmoddb_import_admin_type') eq 'arachne')
+	{
+		#if(param('assembly_bases_file') && param('assembly_links_file') && param('assembly_qual_file'))
+		if(param('bases_upload_file') && param('links_upload_file') && param('qual_upload_file'))
+		{
+			# TODO: Check that file given is in the correct format file fasta
+			# Create tempfiles for the inputs
+			# Copy all the input files to the temporary directory
+
+			## Create temp dir to store the data, can't use clean up here, must do after 
+			# arachne2gmod.pl has completed.
+			my $arachne_tempdir = tempdir();
+
+			open (AB, ">" . $arachne_tempdir . "/assembly.bases") || warn "Couldn't open $arachne_tempdir" . "/assembly.bases";
+			my $upload_bases_file = upload('bases_upload_file');
+			while(<$upload_bases_file>) { print AB $_; }
+
+			open (AQ, ">" . $arachne_tempdir . "/assembly.qual") || warn "Couldn't open $arachne_tempdir" . "/assembly.qual";;
+			my $upload_qual_file = upload('qual_upload_file');
+			while(<$upload_qual_file>) { print AQ $_; }
+
+			open (AL, ">" . $arachne_tempdir . "/assembly.links") || warn "Couldn't open $arachne_tempdir" . "/assembly.links";
+			my $upload_links_file = upload('links_upload_file');
+			while(<$upload_links_file>) { print AL $_; }
+
+			if (param('reads_upload_file')) {
+				open (AR, ">" . $arachne_tempdir . "/assembly.reads") || warn "Couldn't open $arachne_tempdir" . "/assembly.reads";
+				my $upload_reads_file = upload('reads_upload_file');
+				while(<$upload_reads_file>) { print AR $_; }
+			}
+
+			if (param('unplaced_upload_file')) {
+				open (AU, ">" . $arachne_tempdir . "/assembly.unplaced") || warn "Couldn't open $arachne_tempdir" . "/assembly.unplaced";
+				my $upload_unplaced_file = upload('unplaced_upload_file');
+				while(<$upload_unplaced_file>) { print AU $_; }
+			}
+
+			if (param('reads_bases_upload_file')) {
+				open (RB, ">" . $arachne_tempdir . "/reads.fasta") || warn "Couldn't open $arachne_tempdir" . "/reads.fasta";
+				my $upload_reads_bases_file = upload('reads_bases_upload_file');
+				while(<$upload_reads_bases_file>) { print RB $_; }
+			}
+
+			if (param('reads_qual_upload_file')) {
+				open (RQ, ">" . $arachne_tempdir . "/reads.qual") || warn "Couldn't open $arachne_tempdir" . "/reads.qual";
+				my $upload_reads_qual_file = upload('reads_qual_upload_file');
+				while(<$upload_reads_qual_file>) { print RQ $_; }
+			}
+
+			if (param('reads_xml_upload_file')) {
+				open (RX, ">" . $arachne_tempdir . "/reads.xml") || warn "Couldn't open $arachne_tempdir" . "/reads.xml";
+				my $upload_reads_xml_file = upload('reads_xml_upload_file');
+				while(<$upload_reads_xml_file>) { print RX $_; }
+			}
+
+#TODO CHECK and return for bluebook, currently set for seldon
+			# Get the script that does the importing
+			my $import_arachne_bin = $mbl->mblpipe_dir . "/import/arachne/arachne2gmod.pl " . $mbl->organism . " " . $arachne_tempdir . " " . param('gmoddb_import_admin_gaplength') . " cleanup";	
+			#my $import_arachne_bin = "/xraid/habitat/shuse/scripts/mbl-pipeline/import/arachne/arachne2gmod.pl " . $mbl->organism . " " . $arachne_tempdir . " " . param('gmoddb_import_admin_gaplength') . " cleanup";	
+
+			# Check the Append/delete options
+			if (param('gmoddb_import_admin_doption') eq 'Append to existing Assembly')
+			{
+				system($import_arachne_bin . '&');			
+#			} elsif( param('gmoddb_import_admin_doption') eq 'Append only unique sequences into existing Assembly')
+#			{
+#				# TODO: Iterate through the sequences and insert only those that are not included already as a contig.
+#				my ($single_fh, $single_fn) = tempfile();
+#				my $seqs = Bio::SeqIO->new(-file=>$fasta_fn, -format=>'fasta');
+#				while(my $cur_seq = $seqs->next_seq)
+#				{
+#					# Check if it is unique
+#					my $unique = 1;
+#					if($unique)
+#					{
+#						# Create the temp file with this seq
+#						# Import the data
+#					}
+#				}
+			} elsif( param('gmoddb_import_admin_doption') eq 'Delete existing Assembly')
+			{
+				# Delete all assembly tables;
+				# annotation blast_report_full blast_results contig_quality contigs links reads reads_assembly reads_bases reads_quality 
+				$dbh->do("delete from contig");
+				$dbh->do("delete from contig_quality");
+				$dbh->do("delete from links");
+				$dbh->do("delete from reads");
+				$dbh->do("delete from reads_assembly");
+				$dbh->do("delete from reads_bases");
+				$dbh->do("delete from reads_quality");
+				# Execute the import
+				system($import_arachne_bin . '&');
+			}
+ 
+			print "Arachne files are being imported with option: " . param('gmoddb_import_admin_doption'); 
+			#warn "Temp dir: $arachne_tempdir\n";
+
+		} else
+		{
+			print	start_multipart_form({-method=>'POST'}),
+			 	table(
+					TR(
+						td("*Assembly Bases File (assembly.bases) <i>required</i>:"), 
+						td(filefield(-name=>'bases_upload_file') )
+					),
+					TR(
+						td("*Assembly Links File (assembly.links) <i>required</i>:"), 
+						td(filefield(-name=>'links_upload_file') )
+					),
+					TR(
+						td("*Assembly Quality File (assembly.qual) <i>required</i>:"), 
+						td(filefield(-name=>'qual_upload_file') )
+					),
+					TR(
+						td("Assembly Reads File (assembly.reads):"), 
+						td(filefield(-name=>'reads_upload_file') )
+					),
+					TR(
+						td("Assembly Unplaced Reads File (assembly.unplaced):"), 
+						td(filefield(-name=>'unplaced_upload_file') )
+					),
+					TR(
+						td("Reads Fasta File (reads.fasta):"), 
+						td(filefield(-name=>'reads_bases_upload_file') )
+					),
+					TR(
+						td("Reads Quality File (reads.qual):"), 
+						td(filefield(-name=>'reads_qual_upload_file') )
+					),
+					TR(
+						td("Reads Information XML File (reads.xml):"), 
+						td(filefield(-name=>'reads_xml_upload_file') )
+					),
+					TR(
+						td("Minimum Gap Length:"), 
+						td(textfield(-name=>'gmoddb_import_admin_gaplength', -default=>'100') )
+					),
+					TR(
+						td("Delete/Append Options"),
+						td(popup_menu(-name=>'gmoddb_import_admin_doption', -values=>['Append to existing Assembly', 'Append only unique sequences into existing Assembly', 'Delete existing Assembly'])       )
+					)
+				),
+				hidden(-name=>'organism', -value=>$mbl->organism),
+				hidden(-name=>'page', -value=>param('page')),
+				hidden(-name=>'gmoddb_import_admin_type', -value=>'arachne'),
+				hidden(-name=>'gmoddb_import_admin_action', -value=>'import_data'),
+				submit(),
+				end_form;
+		}
+	} else
+	{
+		print "Not Yet";
+	}
+
+} else
+{
+	print h2("Pick an action in the above menu");
+}
+
+
+untie(%session);
+[% END %]

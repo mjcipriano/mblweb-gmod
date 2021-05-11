@@ -1,0 +1,42 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table width="100%">
+	<tr>
+		<td colspan=2>
+			[% INCLUDE orfheader %]
+			<hr><br>
+		</td>
+	</tr>
+	<tr>
+		<td width="65%" valign="top">
+			[% INCLUDE annotationtable %]
+			<p>
+			[% INCLUDE sagetagorfsummary %]
+			<p>
+			[% INCLUDE orfsequence %]
+		</td>
+		<td class="databody" valign="top" align="center">
+			[% INCLUDE orfstats %]
+		</td>
+	</tr>
+</table>
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

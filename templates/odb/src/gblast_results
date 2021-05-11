@@ -1,0 +1,198 @@
+[% PERL %]
+ 
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use Bio::Tools::Run::StandAloneBlast;
+use Bio::SearchIO::Writer::HTMLResultWriter;
+use Bio::AlignIO;
+use Bio::SeqIO;
+use Bio::Root::IO;
+use IO::String;
+
+$ENV{'BLASTDB'} = '/blastdb';
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+ 
+my $dbh = $mbl->dbh();
+
+ 
+my @params = (  'program' => param('PROGRAM'),
+                'database' =>  param('DATALIB')
+);
+
+my $stringio = IO::String->new(uc(param('SEQUENCE')));
+my $seq;
+ 
+my $factory = Bio::Tools::Run::StandAloneBlast->new(@params);
+my $writerhtml = new Bio::SearchIO::Writer::HTMLResultWriter();
+
+if(param('FILTER'))
+{
+	$factory->F('T');
+} else
+{
+	$factory->F('F');
+}
+
+if(param('ALIGNMENTS'))
+{
+	$factory->B(param('ALIGNMENTS'));
+}
+
+if(param('DESCRIPTIONS'))
+{
+	$factory->V(param('DESCRIPTIONS'));
+}
+
+if(param('EXPECT'))
+{
+	$factory->e(param('EXPECT'));
+}
+
+if(param('OOF_ALIGN'))
+{
+	$factory->w(param('OOF_ALIGN'));
+}
+
+if(param('MAT_PARAM'))
+{
+        $factory->M(param('MAT_PARAM'));
+}
+
+
+my $seqs;
+eval {$seqs = Bio::SeqIO->new( '-fh' =>$stringio);};
+
+if($@)
+{
+	print "<h2><b>Sequence Not in recognized format</b></h2>";
+} else
+{
+
+	while(my $input = $seqs->next_seq())
+	{
+
+		my $blast_report;
+
+		eval { $blast_report = $factory->blastall($input); };
+		if($@)
+		{
+			print "<h2><b>Error: Wrong combination of program, database and search string</b></h2><hr>";
+		} else
+		{
+	
+			my $this_result = $blast_report->next_result;
+	 
+	
+			$writerhtml->start_report(\&my_start_report);
+			$writerhtml->title(\&my_title);
+			$writerhtml->hit_link_align(\&my_hit_link_align);
+	 
+			my $blast_string = $writerhtml->to_string($this_result);
+	
+			# Change link locations
+			my $ncbi_link_string = 'http:\/\/www\.ncbi\.nlm\.nih\.gov\/entrez\/query\.fcgi\?db\=nucleotide\&cmd\=search\&term\=';
+			my $ncbi_prot_link_string = 'http:\/\/www\.ncbi\.nlm\.nih\.gov\/entrez\/query\.fcgi\?db\=protein\&cmd\=search\&term\=';
+			my $replace_string = $mbl->gbrowse_organism_cgi() . "?name=";
+			$blast_string =~ s/$ncbi_link_string/$replace_string/gi;
+			$blast_string =~ s/$ncbi_prot_link_string/$replace_string/gi;
+	
+			print $blast_string;
+	
+		} # End IF Succedes
+	
+	
+	}# End While next sequence
+
+}# End If a recognized sequence
+
+close($stringio);
+undef $stringio;
+	
+sub my_start_report
+{
+	my $report = shift;
+	return "";
+}
+
+sub my_title
+{
+	my $result = shift;
+	return "";
+}
+
+sub my_hit_link_align
+{
+	my $self = shift;
+	my $hit = shift;
+	my $result = shift;
+	my $min_val = 100000000000000;
+	my $max_val = 0;
+
+	my $hsp_string;
+	my $db = param('DATALIB');
+	my $offset = 0;
+	my $contig_name;
+	my $multiplier = 1;
+
+	if($db =~ /orfs_nt/)
+	{
+		my $orf = $mbl->get_orf_attributes_hash($hit->name());
+		$offset = $orf->{start};
+		$contig_name = $orf->{contig};
+	} elsif($db =~ /orfs_aa/)
+	{
+		my $orf = $mbl->get_orf_attributes_hash($hit->name());
+		$offset = $orf->{start};
+		$contig_name = $orf->{contig};
+		$multiplier = 3;
+	} elsif($db =~ /unused_reads_nt/)
+	{
+		return $mbl->read_link($hit->name());
+	} else
+	{
+		$contig_name = $hit->name();
+	}
+
+	while(my $hsp = $hit->next_hsp)
+	{
+		my $start;
+		my $end;
+		if($hsp->hit->start < $hsp->hit->end)
+		{
+			$start = $hsp->hit->start;
+			$end = $hsp->hit->end;
+		} else
+		{
+			$start = $hsp->hit->end;
+			$end = $hsp->hit->start;
+		}
+		$end = $end * $multiplier;
+		$start = $start * $multiplier;
+		$hsp_string .= '+' . ($start + $offset) . '-' . ( $end + $offset);
+	
+		# Find area to center around
+
+		if( ($end+$offset) > $max_val)
+		{
+			$max_val = $end + $offset;
+		}
+		if( ($start+$offset) < $min_val)
+		{
+			$min_val = $start + $offset;
+		}
+
+	}
+	$min_val = $min_val - 100;
+	$max_val = $max_val +100;
+	my $return_string = '<a href="' . $mbl->gbrowse_organism_cgi() . '?name=' . $contig_name . ':' . $min_val . '..' . $max_val . ';add=' . $contig_name . '+%22Blast%20Hit%22+Match' . $hsp_string . '">' ;
+	my $link_string = $return_string;
+	$return_string .=  $hit->name() . '</a>';;
+	if(param('show_img'))
+	{
+		$return_string .= "<center>$link_string<img src=\"" . $mbl->gbrowse_organism_img . "?name=" . $contig_name .  ":$min_val..$max_val;width=800;type=Contig+3+ORFs+3+Gene+3;add=$contig_name+%22Blast%20Hit%22+Match" . $hsp_string . '"></a></center>';
+	}
+	return $return_string;
+}
+[% END %]

@@ -1,0 +1,300 @@
+[% PERL %]
+ 
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+  
+use strict;
+   
+my $mbl = Mbl::new(path_info(), param('organism'));
+ 
+my $dbh = $mbl->dbh();
+ 
+my $session_id = $stash->get('session_id');
+my %session;
+  
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $score_sort = 'score_monophyletic';
+
+if(defined(param('score_sort')))
+{
+	# First check if it is a valid score format
+	if(param('score_sort') =~ m/score_monophyletic|score_tests_performed|score_possible_tests|score_non-monophyletic|score_possible-nonmonophyletic|fungi|fungi and microsporidians|apicomplexans|plants and algae|plants|bacteria|fungi and animals|kinetoplastids|animals|archaea|stramenopiles/)
+	{
+		$score_sort = param('score_sort');
+	}
+}
+
+# Types are score_monophyletic|score_tests_performed|score_possible_tests|score_non-monophyletic|score_possible-nonmonophyletic
+my $getannotation = $dbh->prepare("select id, tree_id, type, annotation from tree_annotation where tree_id = ?");
+
+my $get_ma_id_from_treeh = $dbh->prepare("select ma_id from tree where id = ?");
+
+my $listh = $dbh->prepare("select tree_annotation.id, tree_annotation.tree_id, tree.idname, tree_annotation.annotation from tree, tree_annotation where tree.id = tree_annotation.tree_id AND tree_annotation.type = ? order by 0+tree_annotation.annotation desc");
+
+
+print start_form;
+
+$listh->execute($score_sort);
+print center(h1("Legend"));
+
+
+print center(table({-cellspacing=>'20'}, TR(td({-valign=>'top'}, "<center>", h2("Scores"), table( {border=>1},
+			TR(
+				td(b('MP')), td('Monophyletic Score'), td('Represents the number of groupings that tested true for forming a monophyletic clade, i.e., the number of monophyletic clades in the tree')
+			),
+			TR(
+				td(b('NMP')), td('Non-Monophyletic Score'), td('Represents the number of groupings that tested false for forming a monophyletic clade, i.e., the number of non-monophyletic groupings')
+			),
+			TR(
+				td(b('TP')), td('Tests Performed'), td('Represents the number of phylogenetic groupings that were found in the alignment with sufficient organisms to test')
+			),
+			TR(
+				td(b('PT')), td('Possible Tests'), td('Represents the total number of tests that were performed')
+			),
+			TR(
+				td(b('PNM')), td('Possible Non-Monophyletic'), td('Represents the total number of tests minus the number of clades that tested false for monophylogeny (clades not formed)')
+			),
+		)), "</center>" ),
+		TR(
+		td({-valign=>'top'}, "<center>", h2('Tests'), table( {border=>1},
+			TR(
+				td(b('AN')), td('Animals'), td(filter_dropdown('animals')), td('Caenorhabditis elegans, Mus musculus')
+			),
+			TR(
+				td(b('P')), td('Plants'), td(filter_dropdown('plants')), td('Arabidopsis thaliana, Oryza sativa')
+			),
+			TR(
+				td(b('B')), td('Bacteria'), td(filter_dropdown('bacteria')), td('Aquifex aeolicus, Escherichia coli, Rickettsia prowazekii')
+			),
+			TR(
+				td(b('AC')), td('Apicomplexans'), td(filter_dropdown('apicomplexans')), td('Cryptosporidium parvum, Plasmodium falciparum, Toxoplasma gondii')
+			),
+			TR(
+				td(b('K')), td('Kinetoplastids'), td(filter_dropdown('kinetoplastids')), td('Leishmania major, Trypanosoma cruzi, Trypanosoma brucei')
+			),
+			TR(
+				td(b('F')), td('Fungi'), td(filter_dropdown('fungi')), td('Saccharomyces cerevisiae, Cryptococcus neoformans')
+			),
+			TR(
+				td(b('ST')), td('Stramenopiles'), td(filter_dropdown('stramenopiles')), td('Phytophthora sojae and ramo, Thalassiosira pseudonana')
+			),
+			TR(
+				td(b('AR')), td('Archaea'), td(filter_dropdown('archaea')), td('Archaeoglobus fulgidus, Sulfolobus solfataricus')
+			),
+			TR(
+				td(b('F-M')), td('Fungi and Microsporidians'), td(filter_dropdown('fungi and microsporidians')), td('Saccharomyces, Cryptococcus, Encephalitozoon')
+			),
+			TR(
+				td(b('P-AE')), td('Plants and Algae'), td(filter_dropdown('plants and algae')), td('Oryza sativa, Arabidopsis thaliana, Chlamydomonas reinhardtii')
+			),
+			TR(
+				td(b('F-AN')), td('Fungi and Animals'), td(filter_dropdown('fungi and animals')), td('Saccharomyces cerevusuae, Cryptococcus neoformans, Caenorhabditis elegans, Mus musculus')
+			),
+		)), "</center>")
+	));
+print center(i("*Y->Yes, *N->No, *ND->No Data")),br;
+print 	hidden(-name=>'organism', -value=>$mbl->organism),
+	hidden(-name=>'page', -value=>'treelist'),
+	center(submit(-name=>'filter', -value=>'filter')),
+	endform;
+
+my $filters_text = '';
+
+$filters_text .= create_filters_text('animals');
+$filters_text .= create_filters_text('plants');
+$filters_text .= create_filters_text('bacteria');
+$filters_text .= create_filters_text('apicomplexans');
+$filters_text .= create_filters_text('kinetoplastids');
+$filters_text .= create_filters_text('fungi');
+$filters_text .= create_filters_text('stramenopiles');
+$filters_text .= create_filters_text('archaea');
+$filters_text .= create_filters_text('fungi and microsporidians');
+$filters_text .= create_filters_text('plants and algae');
+$filters_text .= create_filters_text('fungi and animals');
+
+print "<center>";	
+print "<TABLE border=1>\n";
+print "<tr><td><b>ORF</b></td>
+<td width=5><b><a href=\"?page=treelist&score_sort=score_monophyletic" . "$filters_text\">MP</a></b></td>
+<td width=5><b><a href=\"?page=treelist&score_sort=score_non-monophyletic" . "$filters_text\">NMP</a></b></td>
+<td width=5><b><a href=\"?page=treelist&score_sort=score_tests_performed" . "$filters_text\">TP</a></b></td>
+<td width=5><b><a href=\"?page=treelist&score_sort=score_possible_tests" . "$filters_text\">PT</a></b></td>
+<td width=5><b><a href=\"?page=treelist&score_sort=score_possible-nonmonophyletic" . "$filters_text\">PNM</a></b></td>
+<td width=5><b>AN</b></td>
+<td width=5><b>P</b></td>
+<td width=5><b>B</b></td>
+<td width=5><b>AC</b></td>
+<td width=5><b>K</b></td>
+<td width=5><b>F</b></td>
+<td width=5><b>ST</b></td>
+<td width=5><b>AR</b></td>
+<td width=5><b>F-M</b></td>
+<td width=5><b>P-AE</b></td>
+<td width=5><b>F-AN</b></td>
+<td width=3><b>tree</b></td>
+<td width=3><b>ma</b></td>
+<td><b>Annotation</b></td></tr>\n";
+
+while(my $tree_row = $listh->fetchrow_hashref)
+{
+	my $tree_id = $tree_row->{tree_id};	
+	my $types = get_tree_annotation_hash($tree_id);
+
+	# Now check for filter values and filter the results based on these
+
+	if(show_row('animals', $types))
+	{
+		next;
+	}
+	if(show_row('plants', $types))
+	{
+		next;
+	}
+	if(show_row('bacteria', $types))
+	{
+		next;
+	}
+	if(show_row('apicomplexans', $types))
+	{
+		next;
+	}
+	if(show_row('kinetoplastids', $types))
+	{
+		next;
+	}
+	if(show_row('fungi', $types))
+	{
+		next;
+	}
+	if(show_row('stramenopiles', $types))
+	{
+		next;
+	}
+	if(show_row('archaea', $types))
+	{
+		next;
+	}
+	if(show_row('fungi and microsporidians', $types))
+	{
+		next;
+	}
+	if(show_row('plants and algae', $types))
+	{
+		next;
+	}
+	if(show_row('fungi and animals', $types))
+	{
+		next;
+	}
+
+	# Get all other variables needed for links
+
+	my $orfid = $tree_row->{idname};
+	# Get the ma_id
+	$get_ma_id_from_treeh->execute($tree_id);
+	my $ma_id = 0;
+	if($get_ma_id_from_treeh->rows > 0)
+	{
+		$ma_id = $get_ma_id_from_treeh->fetchrow_hashref->{ma_id};
+	}
+	my $tree_link = "<a href=\"?page=ma&type=atv&id=" . $ma_id . "\" target=\"_new\">tree</a>";
+	my $alignment_link = "<a href=\"?page=ma&type=text&id=" . $ma_id . "\" target=\"_new\">ma</a>";
+
+	print	TR(
+			td($mbl->orf_link($orfid)),
+			td($types->{'score_monophyletic'}),
+			td($types->{'score_non-monophyletic'}),
+			td($types->{'score_tests_performed'}),
+			td($types->{'score_possible_tests'}),
+			td($types->{'score_possible-nonmonophyletic'}),
+			td(translate_annotation($types->{'animals'})),
+			td(translate_annotation($types->{'plants'})),
+			td(translate_annotation($types->{'bacteria'})),
+			td(translate_annotation($types->{'apicomplexans'})),
+			td(translate_annotation($types->{'kinetoplastids'})),
+			td(translate_annotation($types->{'fungi'})),
+			td(translate_annotation($types->{'stramenopiles'})),
+			td(translate_annotation($types->{'archaea'})),
+			td(translate_annotation($types->{'fungi and microsporidians'})),
+			td(translate_annotation($types->{'plants and algae'})),
+			td(translate_annotation($types->{'fungi and animals'})),
+			td($tree_link),
+			td($alignment_link),
+			td($mbl->get_newest_annotation($orfid))
+		);
+	print "\n";
+}
+
+print "</center>";
+sub get_tree_annotation_hash
+{
+	my $id = shift;
+
+	my $hash;
+	$getannotation->execute($id);
+	while(my $row = $getannotation->fetchrow_hashref)
+	{
+		$hash->{$row->{type}} = $row->{annotation};
+	}
+	return $hash;
+}
+
+sub translate_annotation
+{
+	my $text = shift;
+
+	if($text eq 'no data')
+	{
+		return 'ND';
+	} elsif($text eq 'non-monophyletic')
+	{
+		return 'N';
+	} elsif($text eq 'monophyletic')
+	{
+		return 'Y';
+	} else
+	{
+		return 'ER';
+	}
+	
+}
+
+sub filter_dropdown
+{
+	my $type = shift;
+	my $default = shift;
+	if(!defined($default))
+	{
+		$default = '';
+	}
+	
+	my $returnval = popup_menu(-name=>$type, -values=>['Y', 'N', 'ND', ''], -default=>$default);
+	return $returnval;
+}
+
+sub show_row
+{
+	my $type = shift;
+	my $hash = shift;
+	if( defined(param($type)) && param($type) ne '' && translate_annotation($hash->{$type}) ne param($type) )
+	{
+		return 1;
+	} else
+	{
+		return 0;
+	}
+}
+
+sub create_filters_text
+{
+	my $type = shift;
+
+	return "&$type=" . param($type);
+}
+[% END %]

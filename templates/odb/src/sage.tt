@@ -1,0 +1,104 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		[% html_header %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center><br>
+			   [% INCLUDE sagetag_searchtool default_search='sagetag:' footer_text='<br><small><i>Search for specific SAGE tags or by expressed ORFs.<br>Examples: sagetag:465, ornithine, orf:16670</i></small>' %]
+
+		</center>
+		</td>
+	</tr>
+
+</table>
+<br>
+<table border="0" width=100%>	
+	<tr>
+		<td width="48%" valign="top">
+
+			[% html_leftcolumn %]
+
+		</td>
+		<td width="4%"></td>
+		<td width="48%" valign="top">
+			<table border=0 width="100%" cellspacing=0>
+				<tr class="databody">
+					<td>
+						<center><h1>SAGE Statistics</h1></center><p>
+						<center>All statistics are generated after removal of putative sequencing error.  Our SAGE analyses filter out sequencing error by removal of tags that are not found more than once in any library <b>and</b> do not map to the genome.</center><p>
+					</td>
+				</tr>
+				<tr class="databody">
+					<td>
+						<center><p>
+						<form action="[% html_site_cgi %]/[% database_name %]">
+                                                <input type="hidden" name="page" value="sageanalysis">
+                                                <input type="submit" name="type" value="Advanced SAGE Analysis Tool">
+                                                </form></center>
+					</td>
+				</tr>
+				<tr class="databody">
+					<td>
+						<center><p>
+						<form action="[% html_site_cgi %]/[% database_name %]">
+						<input type="hidden" name="page" value="sagematch">
+						<input type="submit" name="type" value="Search your Sequence for Sage Tags">
+						</form><hr></center>
+					</td>
+				</tr>
+				<tr class="databody">
+					<td>
+						<center>
+							<h3>SAGE Libraries</h3>
+							[% sagelibraries_description %]<br>
+							[% sagelibraries_datasnapshot %]<p><hr>
+							<h3>Tag Mapping Statistics</h3>
+							[% sage_tagmap_description %]<br>
+							[% sagetagmap_datasnapshot %]<p><hr>
+							<h3>Gene Expression Statistics</h3>
+							Expressed ORFs are those to which a SAGE tag has been assigned,  
+including anti-sense transcription.  The <b>Codon Usage Bias</b>  
+statistic is that of <a href="http://www.ncbi.nlm.nih.gov:80/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=2110097">Wright (1990)</a>, with values from 20, in the case of extreme bias where
+one codon is exclusively used for each amino acid, to 61 when the use of  
+alternative synonymous codons is equally likely.  The <b>R-Value</b> is the log-likelihood ratio statistic of <a href="http://www.ncbi.nlm.nih.gov:80/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=11116099">Stekel <i>et al</i> (2000)</a>, which scores tags by their deviation from the null hypothesis of equal frequencies. Higher scores represent a greater deviation from the null hypothesis, while scores close to zero represent near constitutive expression.<p>
+							[% orfexpressedgc_image %]<p>
+							
+							<hr width = "50%">
+							[% orfexpressedcodonusage_image %]<p>
+							<hr width = "50%">
+							[% orfexpressedperlibrary_image %]<p>
+							<hr width = "50%">
+							[% rperprimarytag_image %]<br>
+							<i>[% rperprimarytag_over %]</i>
+						</center>
+					</td>
+				</tr>
+				<tr>
+					<td>
+						[% html_rightcolumn %]
+					</td>
+				</tr>
+			</table>		
+		</td>
+	</tr>
+
+</table>
+<p>
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]
+

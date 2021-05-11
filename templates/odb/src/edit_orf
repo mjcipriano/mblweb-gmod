@@ -1,0 +1,485 @@
+[% PERL %]
+ 
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+  
+use strict;
+   
+my $mbl = Mbl::new(path_info(), param('organism'));
+ 
+my $dbh = $mbl->dbh();
+
+open(LOG, ">>", $mbl->gmodweb_dir . '/html/' . $mbl->organism . "/edit.log");
+
+my $session_id = $stash->get('session_id');
+my %session;
+  
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+ 
+my $orfid;
+if(0)
+{
+	print "This will never happen";
+} else
+{
+
+	if(param('orf') =~ /^orf\:/)
+	{
+	        ($orfid) = param('orf') =~ /^orf\:(\d+)/;
+	} else
+	{
+	        $orfid = param('orf');
+	}
+	if(param('orf') eq 'new')
+	{
+		print center(h3("Adding New Orf"));
+		if(!param('confirm')  )
+		{
+			print 	center(
+					start_form( -action=>$mbl->organism_home, -method=>'PUT'),
+					table({-width=>500, -border=>1},
+						TR(
+							td("Contig"),
+							td( textfield({-name=>"new_contig", -default=>param("new_contig")}) )
+						),
+						TR(
+							td("Start"),
+							td( textfield({-name=>"new_start", -default=>param('new_start')}) )
+						),
+						TR(
+							td("Stop"),
+							td( textfield({-name=>"new_stop", -default=>param('new_stop')}) )
+						),
+						TR(
+							td("Direction"),
+							td( textfield({-name=>"new_direction", -default=>param('new_direction')}) )
+						)
+					)
+				);
+			print 	center(
+					hidden(-name=>'page', -value=>'edit_orf'),
+					hidden(-name=>'orf', -value=>param('new')),
+					hidden(-name=>'edit_type', -value=>'add_orf'),
+					hidden(-name=>'confirm', -value=>'no'),
+					submit()
+				);
+		} elsif(param('insert') ne 'yes')
+		{
+			param(-name=>'confirm', -value=>'yes');
+			print 	center(
+					start_form( -action=>$mbl->organism_home, -method=>'POST'),
+					table({-width=>500, -border=>1},
+						TR(
+							td("Contig"),
+							td(param('new_contig'))
+						),
+						TR(
+							td("Start"),
+							td( param("new_start") )
+						),
+						TR(
+							td("Stop"),
+							td( param("new_stop") )
+						),
+						TR(
+							td("Direction"),
+							td( param("new_direction") )
+						)
+					)
+				);
+			my $new_nt_sequence = $mbl->get_region( param('new_contig'), param('new_start'), param('new_stop') - param('new_start') + 1 );
+			my $new_aa_sequence;
+
+			# reverse complement and translate if needed
+			if(param('new_direction') eq '-')
+			{
+				$new_nt_sequence = $mbl->reverse_complement($new_nt_sequence);
+			}
+
+					$new_aa_sequence = $mbl->translate_nt($new_nt_sequence);
+			print 	center(
+					table({-width=>410, -border=>1}, 
+						TR( 
+							td("New Nucleotide Sequence"), td(  pre( join("\n", split /(.{60})/, $new_nt_sequence)) )
+						),
+						TR(
+							td("New Amino Acid Sequence"), td( pre( join("\n", split /(.{60})/, $new_aa_sequence)) )
+						)
+					)
+				);
+			# Now check for start and stop codons
+			my $has_start = 0;
+			if($new_nt_sequence =~ m/^ATG/i)
+			{
+				$has_start = 1;
+			}
+			my $has_stop = 0;
+			if($new_aa_sequence =~ m/\*$/)
+			{
+				$has_stop = 1;
+			}
+				my $has_internal_stop = 0;
+			if($new_aa_sequence =~ m/.*\*.+$/)
+			{
+				$has_internal_stop = 1;
+			}
+			my %yn;
+			$yn{1} = 'Yes';
+			$yn{0} = 'No';
+			print 	center(
+					p(b("Has Start Codon:" . $yn{$has_start})),
+					p(b("Has Stop Codon:" . $yn{$has_stop})),
+					p(b("Has Internal Stop Codon:" . $yn{$has_internal_stop})),
+			
+			);
+			
+			print hr, center("<img src=\"" . $mbl->gbrowse_organism_img . "?name=" . param('new_contig') .  ":" . (param('new_start')-100). ".." . (param('new_stop')+100) . ";width=800;type=ORFs+3+Gene+3+transcription+3+IntergenicBlastx+3+EST+3;add=" . param('new_contig') . "+neworf+NEWORF+" . param('new_start') . ".." . param('new_stop') . ";style=neworf+glyph=arrow+fgcolor=black+linewidth=4+stranded_arrow=1" . "\"><br>");
+			if( !$has_internal_stop && $has_stop && $has_start)
+			{
+				print center(h2("Valid Open Reading Frame!"));
+				print 	center(
+						hidden(-name=>'page', -value=>'new_orf'),
+						hidden(-name=>'orf', -value=>'new'),
+						hidden(-name=>'edit_type', -value=>'coordinates'),
+						hidden(-name=>'confirm', -value=>'yes'),
+						hidden(-name=>'new_nt_sequence', -value=>$new_nt_sequence),
+						hidden(-name=>'new_contig', -value=>param('new_contig') ),
+						hidden(-name=>'new_start', -value=>param('new_start') ),
+						hidden(-name=>'new_stop', -value=>param('new_stop') ),
+						hidden(-name=>'new_direction', -value=>param('new_direction') ),
+						hidden(-name=>'insert', -value=>'yes'),
+						submit(),
+						end_form()
+					);
+			} else
+			{
+				print center(h2("Invalid Open Reading Frame!"));
+			}
+			print center($mbl->ncbi_blast($new_aa_sequence, 'blastp', 'nr', 'Blast Against nr'));
+		} else
+		{
+			print center("INSERTING New Orf!!");
+			if($mbl->check_annotation_admin_rights($session{'login_id'}))
+			{
+				if($mbl->insert_orf(undef, param('new_contig'), param('new_start'), param('new_stop'), param('new_direction'), param('new_nt_sequence')))
+				{
+					print center("New Orf Created<br>");
+					print LOG join("\t", $session{'login_id'}, "NEW", param('new_contig'), param('new_start'), param('new_stop'), param('new_direction')) . "\n";
+				}
+			} else
+			{
+				print h2("You do not have the permissions to alter an Open Reading Frame.");
+			}
+			
+		}		
+
+						
+	} elsif($mbl->check_orf_existance($orfid, 1))
+	{
+	        my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+	 
+	        my $sequence = $mbl->get_orf_nt_sequence($orfid);
+	 
+	        my $trans_seq = $mbl->get_orf_aa_sequence($orfid);
+	                                                                                                                                                                                                                                                      
+	
+		if(param('edit_type') eq 'coordinates')
+		{
+		        if($mbl->check_orf_existance($orfid))
+			{
+				print 	center(h3("Editing Open Reading Frame Coordinates"));
+				print	center(h2("Orf:" . $orfid));
+	
+				if(!defined(param('confirm')))
+				{
+					print 	center(
+							start_form( -action=>$mbl->organism_home, -method=>'POST'),
+							table({-width=>500, -border=>1},
+								TR(
+									td("Contig"),
+									td( textfield({-name=>"new_contig", -default=>$attrib_row->{contig}, -size=>15}) )
+								),
+								TR(
+									td("Start"),
+									td( textfield({-name=>"new_start", -default=>$attrib_row->{start}, -size=>15}) )
+								),
+								TR(
+									td("Stop"),
+									td( textfield({-name=>"new_stop", -default=>$attrib_row->{stop}, -size=>15}) )
+								),
+								TR(
+									td("Direction"),
+									td( textfield({-name=>"new_direction", -default=>$attrib_row->{direction}, -size=>15}) )
+								)
+							)
+						);
+					print 	center(
+							hidden(-name=>'page', -value=>'edit_orf'),
+							hidden(-name=>'orf', -value=>param('orf')),
+							hidden(-name=>'edit_type', -value=>'coordinates'),
+							hidden(-name=>'confirm', -value=>'no'),
+							submit()
+						);
+					# Check if a larger ORF exists (upstream start codon)
+					my $coding_regions = $mbl->get_orf_upstream_starts($orfid);
+						
+					if(scalar @{$coding_regions} )
+					{
+						if(scalar @{$coding_regions} > 1)
+						{
+							print center(b("Other Start Codons Detected."));
+						}
+
+						my $coding_regions = $mbl->get_orf_upstream_starts($orfid);
+						my $imgstart = 10000000000000000000000;
+						my $imgstop = 0;
+						foreach my $orfregion (@{$coding_regions})
+						{
+							if($orfregion->{start} < $imgstart)
+							{
+								$imgstart = $orfregion->{start};
+							}
+							if($orfregion->{stop} > $imgstop)
+							{
+								$imgstop = $orfregion->{stop};
+							}
+						}
+						$imgstart = $imgstart - 200;
+						$imgstop = $imgstop+200;
+						for(my $i = scalar @{$coding_regions} - 1; $i >= 0; $i--)
+						{
+							my $orfregion = $coding_regions->[$i];
+							my $contig = $orfregion->{contig};
+							my $start = $orfregion->{start};
+							my $stop = $orfregion->{stop};
+							my $direction = $orfregion->{direction};
+							print hr, center("<img src=\"" . $mbl->gbrowse_organism_img . "?name=" . $orfregion->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3+transcription+3+IntergenicBlastx+3+EST+3;add=$contig+neworf+NEWORF+$start..$stop;style=neworf+glyph=arrow+fgcolor=black+linewidth=4+stranded_arrow=1" . "\"><br>");
+							if($direction eq "+")
+							{
+								$direction = "%2B";
+							}
+							print center(a( {-href=>"?page=edit_orf&orf=$orfid&edit_type=coordinates&confirm=no&new_direction=$direction&new_start=$start&new_stop=$stop&new_contig=$contig"}, "Set Coordinates to above Image") );
+							print 	center( table( {-border=>1}, 
+									TR( td("Contig"), td($orfregion->{contig}) ),
+									TR( td("Start"), td($orfregion->{start}) ),
+									TR( td("Stop"), td($orfregion->{stop}) ),
+									TR( td("Direction"), td($orfregion->{direction}) ).
+									TR( td("AA Size"), td( ($orfregion->{stop} - $orfregion->{start} -2)/3 ) )
+								));
+						}
+	
+					}
+				} elsif(param('confirm') eq 'no')
+				{
+					param(-name=>'confirm', -value=>'yes');
+
+					print 	center(
+							start_form( -action=>$mbl->organism_home, -method=>'POST'),
+							table({-width=>500, -border=>1},
+								TR(
+									td("Contig"),
+									td(param('new_contig'))
+								),
+								TR(
+									td("Start"),
+									td( param("new_start") )
+								),
+								TR(
+									td("Stop"),
+									td( param("new_stop") )
+								),
+								TR(
+									td("Direction"),
+									td( param("new_direction") )
+								)
+							)
+						);
+					my $new_nt_sequence = $mbl->get_region( param('new_contig'), param('new_start'), param('new_stop') - param('new_start') + 1 );
+					my $new_aa_sequence;
+	
+					# reverse complement and translate if needed
+					if(param('new_direction') eq '-')
+					{
+						$new_nt_sequence = $mbl->reverse_complement($new_nt_sequence);
+					}
+ 
+					$new_aa_sequence = $mbl->translate_nt($new_nt_sequence);
+					print 	center(
+							table({-width=>410, -border=>1}, 
+								TR( 
+									td("New Nucleotide Sequence"), td(  pre( join("\n", split /(.{60})/, $new_nt_sequence)) )
+								),
+								TR(
+									td("New Amino Acid Sequence"), td( pre( join("\n", split /(.{60})/, $new_aa_sequence)) )
+								)
+							)
+						);
+					# Now check for start and stop codons
+					my $has_start = 0;
+					if($new_nt_sequence =~ m/^ATG/i)
+					{
+						$has_start = 1;
+					}
+					my $has_stop = 0;
+					if($new_aa_sequence =~ m/\*$/)
+					{
+						$has_stop = 1;
+					}
+
+					my $has_internal_stop = 0;
+					if($new_aa_sequence =~ m/.*\*.+$/)
+					{
+						$has_internal_stop = 1;
+					}
+					my %yn;
+					$yn{1} = 'Yes';
+					$yn{0} = 'No';
+					print 	center(
+							p(b("Has Start Codon:" . $yn{$has_start})),
+							p(b("Has Stop Codon:" . $yn{$has_stop})),
+							p(b("Has Internal Stop Codon:" . $yn{$has_internal_stop})),
+					
+					);
+					if( !$has_internal_stop && $has_stop && $has_start)
+					{
+						print center(h2("Valid Open Reading Frame!"));
+						print 	center(
+								hidden(-name=>'page', -value=>'edit_orf'),
+								hidden(-name=>'orf', -value=>param('orf')),
+								hidden(-name=>'edit_type', -value=>'coordinates'),
+								hidden(-name=>'confirm', -value=>'yes'),
+								hidden(-name=>'new_nt_sequence', -value=>$new_nt_sequence),
+								hidden(-name=>'new_contig', -value=>param('new_contig') ),
+								hidden(-name=>'new_start', -value=>param('new_start') ),
+								hidden(-name=>'new_stop', -value=>param('new_stop') ),
+								hidden(-name=>'new_direction', -value=>param('new_direction') ),
+								submit()
+							);
+					} else
+					{
+						print center(h2("Invalid Open Reading Frame!"));
+	
+					}
+					print center($mbl->ncbi_blast($new_aa_sequence, 'blastp', 'nr', 'Blast Against nr'));
+					
+				} elsif(param('confirm') eq 'yes')
+				{
+					if($mbl->check_annotation_admin_rights($session{'login_id'}))
+					{
+						$mbl->update_orf_coordinates($orfid, param('new_contig'), param('new_start'), param('new_stop'), param('new_direction') );
+						$mbl->update_orf_sequence($orfid, param('new_nt_sequence') );
+
+						print center(h3(("UPDATED")));
+						print center(h2("Return to Orf " . $mbl->orf_link($orfid) ));
+						print LOG join("\t", $session{'login_id'}, $orfid, param('new_contig'), param('new_start'), param('new_stop'), param('new_direction'), $attrib_row->{contig}, $attrib_row->{start}, $attrib_row->{stop}, $attrib_row->{direction}) . "\n";
+					} else
+					{
+						print h2("You do not have the correct permissions to add Open Reading Frames");
+					}
+					
+				}
+
+			} # END NOT EXISTS
+
+		} # END COORDINATE EDIT
+
+		if(param('edit_type') eq 'del_re')
+		{
+        		my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+
+			if(param('confirm') eq 'yes')
+			{
+				if(param('new_delete_fg') eq 'Y')
+				{
+					$mbl->delete_orf($orfid, param('new_delete_reason'), $session{'login_id'} );
+					print LOG join("\t", $session{'login_id'}, $orfid, "DELETE", param('new_delete_reason')) . "\n";
+					print center(h2("Deleted"));
+				}elsif(param('new_delete_fg') eq 'N')
+				{
+					$mbl->undelete_orf($orfid);
+					print center(h2("Undeleted"));
+					print LOG join("\t", $session{'login_id'}, $orfid, "UNDELETE") . "\n";
+					
+				}
+				$attrib_row = $mbl->get_orf_attributes_hash($orfid);
+				print center(
+						table({-width=>500, -border=>1},
+							TR(
+								td("Delete"),
+								td( $attrib_row->{delete_fg} )
+							),
+							TR(
+								td("Reason"),
+								td( $attrib_row->{delete_reason} )
+							),
+						)
+					);
+					print p,center("Return to orf " . $mbl->orf_link($orfid) ),p;
+				
+			} elsif(param('confirm') eq 'no')
+			{
+				param(-name=>'confirm', -value=>'yes');
+				print 	center(
+						start_form( -action=>$mbl->organism_home, -method=>'POST'),
+						table({-width=>500, -border=>1},
+							TR(
+								td("Delete"),
+								td( $attrib_row->{delete_fg} . " => " . param('new_delete_fg') )
+							),
+							TR(
+								td("Reason"),
+								td( $attrib_row->{delete_reason} . " => " . param('new_delete_reason') )
+							),
+						)
+					);
+				print 	center(
+						hidden(-name=>'page', -value=>'edit_orf'),
+						hidden(-name=>'orf', -value=>param('orf')),
+						hidden(-name=>'edit_type', -value=>'del_re'),
+						hidden(-name=>'confirm', -value=>'yes'),
+						hidden(-name=>'new_delete_fg', -value=>param('new_delete_fg')),
+						hidden(-name=>'new_delete_reason', -value=>param('new_delete_reason')),
+						submit()
+					);
+				
+			
+			} else
+			{
+				print 	center(
+						start_form( -action=>$mbl->organism_home, -method=>'POST'),
+						table({-width=>500, -border=>1},
+							TR(
+								td("Delete"),
+								td( popup_menu(-name=>"new_delete_fg", -values=>['Y', 'N'], -default=>$attrib_row->{delete_fg}) )
+							),
+							TR(
+								td("Reason"),
+								td( popup_menu(-name=>"new_delete_reason", -values=>['disconnected', 'no stop', 'false start', 'invalid size', 'within other', 'duplicate', 'mid stop', 'user annotated', ''], -default=>$attrib_row->{delete_reason}) )
+							),
+						)
+					);
+				print 	center(
+						hidden(-name=>'page', -value=>'edit_orf'),
+						hidden(-name=>'orf', -value=>param('orf')),
+						hidden(-name=>'edit_type', -value=>'del_re'),
+						hidden(-name=>'confirm', -value=>'no'),
+						submit()
+					);
+
+				}
+			}
+	} else
+	{
+		print "Orf Does not exist!";
+	
+	}
+
+} # END IF NOT AN ADMIN
+
+close(LOG);
+[% END %]

@@ -1,0 +1,330 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+  
+use strict;
+   
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                       
+my %session;
+#%session = %{$mbl->get_session(cookie('SESSION_ID'), \%session)};
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+print "<h4>ORF: ";
+print $mbl->orf_link(param('orf'));
+print "</h4>";
+print "<br>";
+
+#my $annotationadmin_h = $dbh->prepare("select a.id, a.userid, a.orfid, a.update_dt, a.annotation, a.delete_fg, a.blessed_fg, u.user_name, u.email from annotation a, user u where u.id = a.userid AND a.orfid = ? order by update_dt DESC");
+my $annotationadmin_h = $mbl->query('list_annotationadmin', $dbh);
+#my $annotationuser_h = $dbh->prepare("select a.id, a.userid, a.orfid, a.update_dt, a.annotation, a.delete_fg, a.blessed_fg, a.private_fg, u.user_name, u.email from annotation a, user u where u.id = a.userid AND a.orfid = ? AND (a.userid = ? OR (a.blessed_fg = 'Y' AND a.delete_fg = 'N') ) order by update_dt DESC");
+my $annotationuser_h =  $mbl->query('list_annotationuser', $dbh); 
+#my $annotation_id_h = $dbh->prepare("select a.id, a.userid, a.orfid, a.update_dt, a.annotation, a.notes, a.delete_fg, a.blessed_fg, a.qualifier, a.with_from, a.aspect, a.object_type, a.evidence_code, a.private_fg, u.user_name, u.email from annotation a, user u where u.id = a.userid AND a.id = ?");
+
+my $annotation_id_h = $mbl->query('list_annotation_id', $dbh);
+
+my $annotation_update_h = $dbh->prepare("UPDATE annotation set annotation = ?, notes = ?, delete_fg = ?, blessed_fg = ?, qualifier = ?, with_from = ?, aspect = ?, object_type = ?, evidence_code = ?, private_fg = ? where id = ?");
+my $annotation_new_h = $dbh->prepare("INSERT INTO annotation (userid, orfid, annotation, notes, delete_fg, blessed_fg, qualifier, with_from, aspect, object_type, evidence_code, private_fg) VALUES (?, ?, ?, ?, 'N', 'N', ?, ?, ?, ?, ?, ?)");
+my $check_rights_add_h = $dbh->prepare("select id from user_rights where userid = ? AND rights IN ( 'Add Annotation', 'Annotation Admin')");
+my $check_rights_edit_h = $dbh->prepare("select id from user_rights where userid = ? AND rights IN ('Annotation Admin')");
+my $evidence_codes_h = $dbh->prepare("select id, code, description from evidence_codes");
+
+my $annotation_h;
+
+
+# Create evidence code hash
+$evidence_codes_h->execute();
+my %evidence_codes;
+my @evidence_code_array;
+while(my $row = $evidence_codes_h->fetchrow_hashref)
+{
+        $evidence_codes{$row->{id}} = $row->{description};
+        push(@evidence_code_array, $row->{id});
+}
+                                                                                                                                                                                                                                                       
+# Create Aspect Type hash;
+my %aspect_types;
+$aspect_types{'P'} = 'biological process';
+$aspect_types{'F'} = 'molecular function';
+$aspect_types{'C'} = 'cellular component';
+
+
+$check_rights_add_h->execute($session{login_id});
+my $add_rights = 0;
+if($check_rights_add_h->rows > 0)
+{
+	$add_rights = 1;
+}
+
+$check_rights_edit_h->execute($session{login_id});
+my $edit_rights = 0;
+if($check_rights_edit_h->rows > 0)
+{
+        $edit_rights = 1;
+}
+
+
+if(param('submit') eq 'add')
+{
+	# Check if we have add rights
+	if($check_rights_add_h->rows > 0)
+	{
+		$annotation_new_h->execute($session{login_id}, param('orf'), param('annotation'), param('notes'), param('qualifier'), param('with_from'), param('aspect'), param('object_type'), param('evidence_code'), param('private_fg'));
+	}
+
+}elsif(param('submit') eq 'edit')
+{
+	if($edit_rights)
+	{
+		$annotation_update_h->execute(param('annotation'), param('notes'), param('deleted_fg'), param('blessed_fg'), param('qualifier'), param('with_from'), param('aspect'), param('object_type'), param('evidence_code'), param('private_fg'), param('id') );
+	}
+
+}
+
+if($edit_rights)
+{
+	$annotation_h = $annotationadmin_h;
+	$annotation_h->execute(param('orf'));
+} else
+{
+	$annotation_h = $annotationuser_h;
+	if(defined($session{login_id}))
+	{
+		$annotation_h->execute(param('orf'), $session{login_id});
+	} else
+	{
+		 $annotation_h->execute(param('orf'),0);
+	}
+}
+
+print h2("History");
+
+if($add_rights)
+{
+	print	a( { -href=>$mbl->organism_home . "?page=annotation&action=add&orf=" . param('orf')}, "add");
+}
+
+print	br(),
+	"<table border=1>",
+	TR(
+		td(b("Info")),
+		td(b("Annotation")),
+		td(b("Last Updated")),
+		td(b("Annotator")),
+		td(b("Deleted")),
+		td(b("Blessed"))
+	);
+		
+while(my $annotation_row = $annotation_h->fetchrow_hashref)
+{
+	print 	TR(
+			td( a( {-href=>$mbl->organism_home . "?page=annotation&orf=" . param('orf') . "&id=" . $annotation_row->{id}}, ">") ),
+			td( $annotation_row->{annotation} ),
+			td( $annotation_row->{update_dt} ),
+			td( a( {href=>"mailto:" . $annotation_row->{email}}, $annotation_row->{user_name}) ),
+			td( $annotation_row->{delete_fg} ),
+			td( $annotation_row->{blessed_fg})
+	);
+			
+
+}
+
+print "</table>",
+	br();
+
+
+if(param('action') eq 'add' && param('orf') )
+{
+	# Print out add Form
+        $annotation_id_h->execute(param('id'));
+        my $id_row = $annotation_id_h->fetchrow_hashref;
+
+	print "We try to follow as much of the <a href=\"http://www.geneontology.org/GO.annotation.html\">GO Annotation Guide</a> as possible. Please look here for directions<br><p>";
+        print start_form( -action=>$mbl->organism_home, -method=>'POST'),
+        table( {-border=>1},
+                TR(
+                        td(b("ANNOTATOR")),
+                        td($session{login_user_name})
+                ),
+                TR(
+                        td(b("private")),
+                        td(popup_menu({-name=>"private_fg", -values=>['Y', 'N'], default=>'Y' }))
+                ),
+                TR(
+                        td(b("aspect")),
+                        td(popup_menu({-name=>"aspect", -values=>['P', 'F', 'C', ''], -labels=>\%aspect_types, default=>'' }))
+                ),
+                TR(
+                        td(b("Annotation")),
+                        td(textfield({-name=>"annotation", -size=>100, -maxlength=>255}))
+                ),
+                TR(
+                        td(b("Evidence Code")),
+                        td(popup_menu(-name=>"evidence_code", -values=>\@evidence_code_array, -default=>'', -labels=>\%evidence_codes))
+                ),
+                TR(
+                        td(b("With/From<i>(Database:id)</i>")),
+                        td(textfield({-name=>"with_from", -size=>100, -maxlength=>255}))
+                ),
+                TR(
+                        td(b("Qualifier")),
+                        td(popup_menu({-name=>"qualifier", -values=>['NOT', 'contributes_to', 'NOT contributes_to', ''],default=>'' }))
+                ),
+		TR(
+                        td(b("Object Type")),
+                        td(popup_menu({-name=>"object_type", -values=>['gene', 'transcript', 'protein', 'protein_structure', 'complex', ''],default=>'' }))
+                ),
+                TR(
+                        td(b("Notes")),
+                        td(textarea(-name=>"notes", -rows=>10, -columns=>80))
+                )
+        ),
+        hidden(-name=>'organism', -value=>$mbl->organism),
+        hidden(-name=>'page', -value=>'annotation'),
+        hidden(-name=>'id', -value=>param('id')),
+        hidden(-name=>'orf', -value=>param('orf')),
+        hidden(-name=>'added', -value=>'T'),
+        p,
+        submit({-value=>"add", -name=>"submit"}),
+        end_form;
+
+
+} elsif( param('action') eq 'edit' && param('id') )
+{
+	# Print out edit Form
+	$annotation_id_h->execute(param('id'));
+        my $id_row = $annotation_id_h->fetchrow_hashref;
+	print start_form( action=>$mbl->organism_home, method=>'POST'),
+	table( {-border=>1},
+		TR(
+			td(b("ANNOTATOR")),
+			td($id_row->{user_name})
+		),
+                TR(
+                        td(b("Private")),
+                        td(popup_menu(-name=>"private_fg", -values=>["Y", "N"], -default=>$id_row->{private_fg}))
+                ),
+		TR(
+			td(b("Deleted")),
+			td(popup_menu(-name=>"deleted_fg", -values=>["Y", "N"], -default=>$id_row->{delete_fg}))
+		),
+		TR(
+			td(b("Blessed")),
+			td(popup_menu(-name=>"blessed_fg", -values=>["Y", "N"], -default=>$id_row->{blessed_fg}))
+		),
+                TR(
+                        td(b("aspect")),
+                        td(popup_menu({-name=>"aspect", -values=>['P', 'F', 'C', ''], -labels=>\%aspect_types, default=>$id_row->{aspect_type} }))
+                ),
+		TR(
+			td(b("Annotation")),
+			td(textfield({-name=>"annotation", -default=>$id_row->{annotation}, -size=>100, -maxlength=>255}))
+		),
+                TR(
+                        td(b("Evidence Code")),
+                        td(popup_menu(-name=>"evidence_code", -values=>\@evidence_code_array, -default=>$id_row->{evidence_code}, -labels=>\%evidence_codes))
+                ),
+                TR(
+                        td(b("With/From<i>(Database:id)</i>")),
+                        td(textfield({-name=>"with_from", -default=>$id_row->{with_from}, -size=>100, -maxlength=>255 } ))
+                ),
+                TR(
+                        td(b("Qualifier")),
+                        td(popup_menu({-name=>"qualifier", -values=>['NOT', 'contributes_to', 'NOT contributes_to', ''],default=>$id_row->{qualifier} }))
+                ),
+                TR(
+                        td(b("Object Type")),
+                        td(popup_menu({-name=>"object_type", -values=>['gene', 'transcript', 'protein', 'protein_structure', 'complex', ''],default=>$id_row->{object_type} }))
+                ),
+		TR(
+			td(b("Notes")),
+			td(textarea(-name=>"notes", -rows=>10, -columns=>80, -default=>$id_row->{notes}))
+		)
+	),
+	hidden(-name=>'organism', -value=>$mbl->organism),
+        hidden(-name=>'page', -value=>'annotation'),
+	hidden(-name=>'id', -value=>param('id')),
+	hidden(-name=>'orf', -value=>param('orf')),
+	hidden(-name=>'edited', -value=>'T'),
+	p,
+        submit({-value=>"edit", -name=>"submit"}),
+        end_form;
+
+	
+				
+
+} elsif (param('id'))
+{
+
+	$annotation_id_h->execute(param('id'));
+	my $id_row = $annotation_id_h->fetchrow_hashref;
+	print 	br(),
+		h2("Annotation");
+	if($edit_rights)
+	{
+		print a( { -href=>$mbl->organism_home . "?page=annotation&action=edit&orf=" . param('orf') . "&id=" . param('id')}, "edit");
+	}
+	print	table( {-border=>'1'},
+			TR(
+				td(b("Annotator")),
+				td($id_row->{user_name})
+			),
+			TR(
+				td(b("Last Changed")),
+				td($id_row->{update_dt})
+			),
+                        TR(
+                                td(b("Private")),
+                                td($id_row->{private_fg})
+                        ),
+			TR(
+				td(b("Deleted")),
+				td($id_row->{delete_fg})
+			),
+			TR(
+				td(b("Blessed")),
+				td($id_row->{blessed_fg})
+			),
+                        TR(
+                                td(b("Aspect")),
+                                td($aspect_types{$id_row->{aspect}})
+                        ),
+			TR(
+				td(b("Annotation")),
+				td($id_row->{annotation})
+			),
+                        TR(
+                                td(b("Evidence Code")),
+                                td($evidence_codes{$id_row->{evidence_code}})
+                        ),
+                        TR(
+                                td(b("With/From")),
+                                td($id_row->{with_from})
+                        ),
+                        TR(
+                                td(b("Qualifier")),
+                                td($id_row->{qualifier})
+                        ),
+                        TR(
+                                td(b("Object Type")),
+                                td($id_row->{object_type})
+                        ),
+			TR(
+				td(b("Notes")),
+				td(pre($id_row->{notes}))
+			)
+		);
+}
+
+untie(%session);
+
+[% END %]

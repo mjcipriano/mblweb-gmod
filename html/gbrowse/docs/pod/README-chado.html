@@ -1,0 +1,91 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>README-chado</title>
+<link rev="made" href="mailto:root@localhost" />
+</head>
+
+<body style="background-color: white">
+
+<p><a name="__index__"></a></p>
+<!-- INDEX BEGIN -->
+
+<ul>
+
+	<li><a href="#support_for_the_chado_database_schema">Support for the chado database schema</a></li>
+</ul>
+<!-- INDEX END -->
+
+<hr />
+<p>
+</p>
+<h1><a name="support_for_the_chado_database_schema">Support for the chado database schema</a></h1>
+<p>The chado schema ( <a href="http://www.gmod.org/schema">http://www.gmod.org/schema</a> ) is a comprehensive database
+schema developed largely by developers at UC Berkeley and Harvard working
+on FlyBase.  It is intended to be a generic database schema for model
+organism use.  Its use with GBrowse is supported via a limited implementation
+of the Das interface from BioPerl.  It is limited in that I implemented 
+only what I needed of the interface and nothing more.</p>
+<p>The chado adaptor works through three perl modules included in this 
+distribution:</p>
+<pre>
+  lib/Bio/DB/Das/Chado.pm
+  lib/Bio/DB/Das/Chado/Segment.pm
+  lib/Bio/DB/Das/Chado/Segment/Feature.pm</pre>
+<p>These files are installed the in the BioPerl infastructure when 'make install' 
+is run.</p>
+<p>In addition to the standard chado schema, this adaptor requires a few
+additional views and functions.  These are found in two files in the
+chado CVS or in a gmod distribution.  These are:</p>
+<pre>
+  schema/chado/modules/sequence/gff-bridge/sequence-gff-views.sql
+  schema/chado/modules/sequence/gff-bridge/sequence-gff-funcs.pgsql</pre>
+<p>The easiest way to get these into the chado schema is include them when 
+building the chado schema from a gmod release during `perl Makefile.PL`.
+It is currently included by default when the schema is built this way.
+If you already have a chado instance and want to add these items,
+the easiest way to do that is to cat the files
+to stdout and pipe that to a psql command:</p>
+<pre>
+  % cat sequence-gff-views.sql   | psql &lt;chado-database-name&gt;
+  % cat sequence-gff-funcs.pgsql | psql &lt;chado-database-name&gt;</pre>
+<p>A sample chado configuration file is included in contrib/conf_files/.  
+Since chado uses the Sequence Ontology for its controlled vocabulary, it
+is quite likely that this configuration file should work for any
+instance of chado once the database-specific parameters are set.
+Also, depending on what the ``reference type'' is (usually something
+like 'chromosome' or 'contig'), the line in the configuration for 
+reference class will need to be modified to agree with your data.</p>
+<p>After the tables are created, the user that is running Apache must
+be granted privileges to select on several tables.  Usually that
+user is 'nobody', although on RedHat systems using RPM installed Apache
+the user is 'apache'.  First create that user in Postgres, then in the
+psql shell grant select permissions:</p>
+<pre>
+  CREATE USER nobody;
+  GRANT SELECT ON feature_synonym      TO nobody;
+  GRANT SELECT ON synonym              TO nobody;
+  GRANT SELECT ON feature_dbxref       TO nobody;
+  GRANT SELECT ON dbxref               TO nobody;
+  GRANT SELECT ON feature              TO nobody;
+  GRANT SELECT ON featureloc           TO nobody;
+  GRANT SELECT ON cvterm               TO nobody;
+  GRANT SELECT ON feature_relationship TO nobody;
+  GRANT SELECT ON cv                   TO nobody;
+  GRANT SELECT ON gffatts              TO nobody;
+  GRANT SELECT ON feature_cvterm       TO nobody;
+  GRANT SELECT ON feature_gcontext     TO nobody;
+  GRANT SELECT ON gcontext             TO nobody;
+  GRANT SELECT ON featureprop          TO nobody;
+  GRANT SELECT ON pub                  TO nobody;
+  GRANT SELECT ON feature_pub          TO nobody;
+  GRANT SELECT ON db                   TO nobody;</pre>
+<p>If you encounter any bugs or problems with this chado adaptor, please
+let me know.</p>
+<p>Scott Cain
+<a href="mailto:cain@cshl.org">cain@cshl.org</a>
+2003/08/20</p>
+
+</body>
+
+</html>

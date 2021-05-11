@@ -1,0 +1,984 @@
+[% PERL %]
+
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use File::Temp qw/ tempfile tempdir /;
+use Algorithm::Cluster;
+use Algorithm::Cluster qw/kcluster/;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+ 
+my %session;
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir
+        };
+ 
+
+
+if(!param('libraries'))
+{
+
+
+} else
+{
+	my $result_hash;
+	my @lib_array;
+	my $lib_total_hash;
+        my $lib_total_array;
+	my $R_hash;
+	my $desc_hash;
+	my $orfid_hash;
+	my $namedesc_hash;
+	my $nreval_hash;
+	my $sequence_hash;
+	my $tagtype_hash;
+	my $cluster_hash;
+
+        my @libs_temp = param('libraries');
+	my @libs_chosen;
+
+	# Make sure that chosen libraries are valid
+	my %valid_libs;
+
+	my $libh = $mbl->query('get_library_access');
+	$libh->execute($session{'login_id'});
+	while(my $row = $libh->fetchrow_hashref)
+	{
+		$valid_libs{$row->{library}} = 1;
+	}
+
+	foreach my $lib(@libs_temp)
+	{
+		if($valid_libs{$lib} == 1)
+		{
+			push(@libs_chosen, $lib);
+		}
+	}
+	
+	
+        my $num_libraries = scalar @libs_chosen;
+
+
+	my $blast_h = $dbh->prepare( "select hit_name, description, evalue from blast_results where sequence_type_id = 2 AND db = 2 AND algorithm = 3 AND idname = ? AND evalue <= 1e-3 AND (description not like '%ATCC 50803%' OR description like '%gb|%') order by evalue limit 1");
+
+
+	# Do some checking to make sure we have valid paramaters
+	if($num_libraries < 1)
+	{
+		print header;
+		print "You must select at least 1 library!";
+		die("You must select at least 1 library!");
+	}
+
+	if( (param('min_seq_count') < 0) || ( param('min_seq_count') eq "") )
+	{
+                print header;
+                print "You must select a minimum sequence count of at least 0!";
+                die("You must select a minimum sequence count of at least 0!");
+	}
+
+        if( (param('r_val') < 0) || ( param('r_val') eq "") )
+        {
+                print header;
+                print "You must select a minimum R value of at least 0!";
+                die("You must select a minimum R value of at least 0!");
+        }
+
+
+
+	# Get tagID's which are greater then min_seq_count
+	my $library_selected = '';
+	my $library_select = 'select  ';
+	my $library_select2 = 'select ';
+	my $add_total .= '0';
+	foreach my $lib (@libs_chosen)
+	{
+		$library_selected .= ', ' . $dbh->quote($lib);
+		$add_total .= '+srs.' . $lib;
+		if(param('export_type') eq 'Cluster 3.0')
+		{
+			$library_select .= $lib . ".result+1 as " . $lib . ", ";
+			$library_select2 .= 'srs.' . $lib . '+1 AS ' . $lib . ', ';
+		} else
+		{
+			$library_select .= $lib . ".result as " . $lib . ", ";
+			$library_select2 .= 'srs.' . $lib . ', ';
+		}
+		
+	}
+
+	$library_select .= " st.tagid, st.sequence from sage_tags st";
+	$library_select2 .= " srs.tagid, srs.sequence from sage_results_summary srs";
+
+	foreach my $lib (@libs_chosen)
+        {
+                $library_select .= ', sage_results ' . $lib;
+        }
+
+	if(param('primary_tags') eq 'True')
+	{
+		$library_select .= ', orftosage';
+		$library_select2 .= ', orftosage';
+	}
+
+	if(param('one_rule') eq 'T')
+	{
+	
+	}	
+	$library_select .= " WHERE st.tagid = st.tagid ";
+	$library_select2 .= " WHERE 1=1 ";
+	
+        foreach my $lib (@libs_chosen)
+        {
+                $library_select .= ' AND st.tagid = '  . $lib . '.tagid AND ' . $lib . '.library = ' . $dbh->quote($lib) ;
+                                                                                                                                                                                 
+        }
+
+        if(param('primary_tags') eq 'True')
+        {
+                $library_select .= " AND orftosage.tagid = st.tagid AND orftosage.tagtype = 'Primary Sense Tag'";
+		$library_select2 .= " AND orftosage.tagid = srs.tagid AND orftosage.tagtype = 'Primary Sense Tag'";
+        }
+
+	# Find which tags to include due to min sequence count
+	my $tagid_in_query = "select distinct tagid from sage_results where result >= " . $dbh->quote(param('min_seq_count')) . " AND library IN (1" . $library_selected . ")";
+	
+	
+	# Include only those above min sequence count
+        $library_select .= " AND st.tagid IN ($tagid_in_query) ";
+	$library_select2 .= " AND srs.tagid IN ($tagid_in_query) ";
+
+
+
+	# Find which tags to include due to the one rule
+	my $sage_in_query_reduced;
+	my $one_rule_query = "select distinct sr.tagid from sage_results sr LEFT OUTER JOIN tagmap tm on sr.tagid = tm.tagid where ( tm.contig is not null OR sr.result >= 2)";
+	if(param('one_rule') eq 'T')
+	{
+                $library_select .= " AND st.tagid IN ($one_rule_query) ";
+                $library_select2 .= " AND srs.one_rule = 'Y' ";
+	}
+
+	$library_select2 .= " AND $add_total > 0";
+	# Execute
+
+	my $all_h = $dbh->prepare($library_select2);
+	$all_h->execute();
+
+
+	my %libtotalcount;	 # total sample size of each library
+	my $grandtotalcount = 0; # grand total sample size of all libraries
+
+	# Find Grand total counts and per library counts 
+	# Note: I will change this to get this info from the select statement later rather then using perl to get this information
+
+	if(param('recalculate') eq 'T')
+	{
+		foreach my $lib(@libs_chosen)
+		{
+			my $total = $mbl->get_one_sage_library_total_filtered($lib);
+			$libtotalcount{"$lib"} = $total;
+			$grandtotalcount += $total;
+		}
+	} else
+	{
+                foreach my $lib(@libs_chosen)
+                {
+                        my $total = $mbl->get_one_sage_library_total_filtered($lib);
+                        $libtotalcount{"$lib"} = $total;
+                        $grandtotalcount += $total;
+                }
+	}
+
+	# get the highest amount of tags in any one library
+	my $highest_count = 0;
+	while(my ($key, $val) = each(%libtotalcount))
+	{
+		if($val > $highest_count)
+		{
+			$highest_count = $val;
+		}
+	}
+
+	
+	$all_h->execute();
+	
+	# Create the library short name array
+	my $libshorth = $dbh->prepare("select short_name from sage_library_names where library = ?");
+	foreach my $lib(@libs_chosen)
+	{
+		$libshorth->execute($lib);
+		my $lib_short = $libshorth->fetchrow_hashref;
+		push(@lib_array, $lib_short->{short_name});
+	}
+
+	
+	# Now find the R value for each tag
+	while(my $this_row = $all_h->fetchrow_hashref)
+        {
+		my @tmp_result_array;
+		my $grandtagcount = 0;
+		my $orfid_hit = '';
+		my $this_eval = '';
+		my $print_me = 1;
+
+		foreach my $lib(@libs_chosen)
+		{
+			$grandtagcount += $this_row->{$lib};
+		}
+
+        	my $grandtagfrequency = $grandtagcount / $grandtotalcount;                                 # average grand frequency of this tag
+        	my $Rvalue = 0;
+		my $name_desc = undef;
+		foreach my $lib(@libs_chosen)
+                {
+			my $tempR = 0;
+			if($this_row->{$lib} > 0)
+			{
+				$tempR = $this_row->{$lib} / ($libtotalcount{"$lib"} * $grandtagfrequency);
+				$tempR = log10($tempR);
+				$tempR = $this_row->{$lib} * $tempR;
+				$Rvalue += $tempR;
+			}
+		}
+
+		# Print out this row if it's R value is high enough
+		my $printrval = 0;
+		if(param('rval_gl') eq "greater than")
+		{
+			if($Rvalue >= param('r_val'))
+			{
+				$printrval = 1;
+			} else
+			{
+				$print_me = 0;
+			}
+		} elsif(param('rval_gl') eq "less than")
+		{
+			if($Rvalue <= param('r_val'))
+			{
+				$printrval = 1;
+			} else
+			{
+				$print_me = 0;
+			}
+		}
+
+		# Check if it it up or down regulated in a specific library
+		if( param('regulation') ne 'Not Relevant' && $print_me)
+		{
+			# make sure both are chosen as selected libraries
+			my $regulated_in = param('regulation_regulated_in');
+			my $regulated_vs = param('regulation_regulated_vs');
+			if($libtotalcount{$regulated_in} <= 0)
+			{
+				# Do nothing because we didn't choose this library to analyze
+			} elsif($regulated_vs eq 'All')
+			{
+				my $max = 0;
+				my $min = 100000000000;
+				my $exclusive = 1;
+				my $reg_in_num = $this_row->{$regulated_in}/ $libtotalcount{$regulated_in} ;
+				foreach my $lib(@libs_chosen)
+				{
+					my $cur = $this_row->{$lib} / $libtotalcount{$lib};
+					if($cur > $max)
+					{
+						$max = $cur;
+					}
+					if($cur < $min)
+					{
+						$min = $cur;
+					}
+					if( ($lib ne $regulated_in) && ($cur > 0) )
+					{
+						$exclusive = 0;
+					}
+				}
+				if(param('regulation') eq 'upregulated')
+				{
+					if($reg_in_num >= $max)
+					{
+						# Do nothing, we want to print it
+					} else
+					{
+						$print_me = 0;
+					}
+				} elsif(param('regulation') eq 'downregulated')
+				{
+					if($reg_in_num <= $min)
+					{
+						# Do nothing, we want to print it
+					} else
+					{
+						$print_me = 0;
+					}
+				} elsif(param('regulation') eq 'exclusive')
+				{
+					if( ($reg_in_num > 0) && $exclusive)
+					{
+						# We want to print
+					} else
+					{
+						$print_me = 0;
+					}
+				}
+
+			} elsif($libtotalcount{$regulated_vs} <= 0)
+			{
+				# Do nothing since we do not have a library to analyze
+			} else
+			{
+				my $in_num = $this_row->{$regulated_in}/ $libtotalcount{$regulated_in};
+				my $vs_num = $this_row->{$regulated_vs}/ $libtotalcount{$regulated_vs};
+				if(param('regulation') eq 'upregulated')
+				{
+					if($in_num > $vs_num)
+					{
+						# Do nothing
+					} else
+					{
+						$print_me = 0;
+					}
+				} elsif(param('regulation') eq 'downregulated')
+				{
+					if($in_num < $vs_num)
+					{
+						# Do nothing
+					} else
+					{
+						$print_me = 0;
+					}
+				} elsif(param('regulation') eq 'exclusive')
+				{
+					if($vs_num <= 0 && $in_num > 0)
+					{
+						# Do nothing, print it
+					} else
+					{
+						$print_me = 0;
+					}
+				}
+			}
+
+		}
+
+		if($print_me)
+		{
+	                $R_hash->{$this_row->{tagid}} = $Rvalue;
+				
+			# Now check if it has a orf that it is mapped to
+			my $tagorfrow = $mbl->get_sage_orf_info($this_row->{tagid});
+			my $unique_map = 0;
+			
+			
+			
+			if($tagorfrow)
+			{
+				$unique_map = 1;
+
+				$tagtype_hash->{$this_row->{tagid}} = $tagorfrow->{tagtype};
+				$orfid_hit = $tagorfrow->{orfid};
+
+				if( (param('desc_type') eq 'orf annotation only') || (param('desc_type') eq 'combination') )
+				{
+					my $annotation = $mbl->get_newest_annotation($tagorfrow->{orfid});
+					if($annotation ne 'No annotation')
+					{
+						$name_desc = $annotation;
+					}
+				} 
+				if( (param('desc_type') eq 'top orf nr blast hit only') || (param('desc_type') eq 'combination' && !$name_desc) )
+				{
+					$blast_h->execute($tagorfrow->{orfid});
+					if($blast_h->rows > 0)
+					{
+						my $blast_row = $blast_h->fetchrow_hashref;
+						$this_eval = $blast_row->{evalue};
+						$name_desc = $blast_row->{hit_name} . '|' . $blast_row->{description} . '|' . $blast_row->{evalue};
+					}
+				}
+ 
+			}
+
+			if( (param('desc_type') eq 'top sagetag blast hit only') || ( (param('desc_type') eq 'combination') && (!$name_desc) ) )
+                        {
+                                my $sage_hit = $mbl->get_sage_top_blast_hit($this_row->{tagid});
+                                if($sage_hit)
+                                {	
+                                        $name_desc = $sage_hit;
+				}
+                        }
+			if($name_desc eq "")
+			{
+				my $contig_desc = $mbl->get_sage_contig_desc($this_row->{tagid});
+				if($contig_desc)
+				{
+					$name_desc = $contig_desc;
+				}
+			}
+
+			if(param('export_type') eq 'Cluster 3.0')
+			{
+				if(param('include_orfid') eq 'T')
+				{
+					if($orfid_hit ne '')
+					{
+						$name_desc = 'Orf:' . $orfid_hit . ' ' . $name_desc;
+					}
+				}
+
+
+				if(param('include_r_val') eq 'T')
+	                        {
+					$name_desc = 'R-Value:' . sprintf("%.4f", $Rvalue) . ' ' . $name_desc;
+	                        }
+
+				if(param('include_tagid') eq 'T')
+				{
+					$name_desc = 'tagID:' . $this_row->{tagid} .  $name_desc;
+				}
+			}
+
+			chomp($name_desc);
+			$name_desc =~ s/(\s+)$//gi;
+			$desc_hash->{$this_row->{tagid}} = $name_desc;
+
+			# Check if we want to display those without an nr hit or without a unique mapping
+			# Now print out our line
+			if( param('unique_mapping') eq 'T' && !$unique_map)
+			{
+				$print_me = 0;
+			}
+
+			if($print_me)
+			{
+				$sequence_hash->{$this_row->{tagid}} = $this_row->{sequence};
+				$orfid_hash->{$this_row->{tagid}} = $orfid_hit;
+				$nreval_hash->{$this_row->{tagid}} = $this_eval;
+				$namedesc_hash->{$this_row->{tagid}} = $name_desc;
+				my $loc = 0;
+				foreach my $lib(@libs_chosen)
+		                {
+					push(@tmp_result_array, $this_row->{$lib});
+					$lib_total_hash->{$lib} += $this_row->{$lib};
+                                        $lib_total_array->[$loc] += $this_row->{$lib};
+					$loc++;
+				}
+				$result_hash->{$this_row->{tagid}} = [@tmp_result_array];
+			} else
+			{
+				# unset all hashes with this tag
+				delete($R_hash->{$this_row->{tagid}});
+				delete($desc_hash->{$this_row->{tagid}});
+				delete($orfid_hash->{$this_row->{tagid}});
+				delete($namedesc_hash->{$this_row->{tagid}});
+				delete($nreval_hash->{$this_row->{tagid}});
+				delete($sequence_hash->{$this_row->{tagid}});
+				delete($tagtype_hash->{$this_row->{tagid}});
+				delete($cluster_hash->{$this_row->{tagid}});
+
+			}
+		}
+
+        }
+
+
+	# Create Cluster
+	if(param('do_cluster') eq 'True')
+	{
+		create_cluster(create_array());
+	}
+
+	# START EXPORT PORTION
+
+        if(param('export_type') eq 'Cluster 3.0')
+        {
+
+		print header( {
+                -content_type=>'application/txt; name="sageresults.txt"',
+                -content_disposition=>'attachment; filename=sageresults.txt',
+                -content_transfer_encoding=>'binary'}
+		);
+
+                # tagid DESC libraries
+                #Print the header row
+                my $header_row = "tagid\tNAME";
+		foreach my $val (@lib_array)
+                {
+                        $header_row .= "\t" . $val ;
+                }
+                print $header_row . "\n";
+                                                                                                                                                                                 
+                # Print results
+                my (@tags) = sort_hash(param('sort_by'));
+
+                foreach my $row(@tags)
+                {
+                        my $first = 1;
+                        my $row_val = '';
+                        my $tagid = $row;
+                        print $tagid . "\t";
+                        print 'tagtype:' . $mbl->get_tagtype($tagid) . ' ' . $desc_hash->{$tagid};
+                        my $tmp_array = $result_hash->{$tagid};
+                        foreach my $col_val(@$tmp_array)
+                        {
+                                        $row_val .=  "\t" . $col_val;
+                        }
+                        print  $row_val . "\n";
+                }
+                                                                                                                                                                                 
+                                                                                                                                                                                 
+                                                                                                                                                                                 
+        } # END EXPORT Cluster30
+
+        if(param('export_type') eq 'CLUTO')
+        {
+                                                                                                                                                                                 
+                print header( {
+                -content_type=>'application/txt; name="sageresults_cluto.txt"',
+                -content_disposition=>'attachment; filename=sageresults_cluto.txt',
+                -content_transfer_encoding=>'binary'}
+);
+                                                                                                                                                                                 
+                # tagid DESC libraries
+                #Print the header row
+                my $header_row = "tagid\t";
+                foreach my $val (@lib_array)
+                {
+                        $header_row .= $val . "\t";
+                }
+                chop($header_row);
+                print $header_row . "\n";
+                                                                                                                                                                                 
+                # Print results
+		my @tags = sort_hash(param('sort_by'));
+
+                foreach my $row(@tags)
+                {
+                        my $first = 1;
+                        my $row_val = '';
+                        my $tagid = $row;
+                        print $tagid ;
+                        my $tmp_array = $result_hash->{$tagid};
+                        foreach my $col_val(@$tmp_array)
+                        {
+                                        $row_val .=  "\t" . $col_val;
+                        }
+                        print  $row_val . "\n";
+                }
+
+        } # END EXPORT CLUTO
+
+
+
+        if(param('export_type') eq 'HTML')
+        {
+        
+		# tagid Rvalue orfid nrdesc libraries
+		print '<table border=1 width="100%"><tr><td><center>Tag ID</center></td><td>Sequence</td><td>Tag Type</td><td><center>Cluster</center></td><td><center>R-Value</center></td><td><center>OrfID</center></td><td><center>Description</center></td>' . "\n";
+
+
+                #Print the header row
+                my $header_row = '';
+
+                foreach my $val (@lib_array)
+                {
+                        $header_row .= '<td>' . $val . '</td>';
+                }
+
+                print $header_row . '</tr>';
+
+		# Print results
+		my @tags = sort_hash(param('sort_by'));
+
+		foreach my $row(@tags)
+		{
+			my $first = 1;
+                        my $row_val = '';
+			my $tagid = $row;
+			print '<tr>';
+                        print '<td><center>' . $mbl->sagetag_link($tagid);
+			print  '</center></td>';
+			print '<td><pre>' . $sequence_hash->{$tagid} . '</pre></td>';
+			print $mbl->color_tagtype($tagid);
+			print $mbl->color_clustervalue($cluster_hash->{$tagid});
+			print $mbl->color_rvalue(sprintf("%.4f", $R_hash->{$tagid}));
+                        print td(center($mbl->orf_link($orfid_hash->{$tagid}) . "&nbsp"));
+                        print '<td>' . $namedesc_hash->{$tagid} . '&nbsp</td>';
+			my $tmp_array = $result_hash->{$tagid};
+			my $count = 0;
+			my $expr_array;
+			my $color_array;
+			if(param('color_median') eq 'True')
+			{
+				foreach my $col_val(@$tmp_array)
+				{
+					push(@$expr_array, sprintf("%.5f", ($col_val / $libtotalcount{$libs_chosen[$count]}) * 100));
+					$count++;
+				}
+				$color_array = $mbl->color_median_expr($expr_array);
+				
+			}
+
+			my $count = 0;
+                        foreach my $col_val(@$tmp_array)
+                        {
+				
+				my $expr_percent = sprintf("%.5f", ($col_val / $libtotalcount{$libs_chosen[$count]}) * 100);
+				if(param('color_median') eq 'True')
+				{
+					$row_val .= $color_array->[$count];
+
+				} elsif(param('sequence_type') eq 'relative abundance')
+				{
+					$row_val .= $mbl->color_expression($expr_percent, $expr_percent);
+				} elsif(param('sequence_type') eq 'virtual northern')
+				{
+					$row_val .= $mbl->color_expression($expr_percent, '&nbsp');
+				} else
+				{
+					$row_val .= $mbl->color_expression($expr_percent, $col_val);
+				}
+				$count++;
+                        }
+                        print  $row_val . "</tr>\n";
+                }
+		
+		print '</table>';
+		foreach my $totval(@$lib_total_array)
+		{
+			#print $totval . "<br>";
+		}
+
+        } # END HTML EXPORT
+
+
+
+        if(param('export_type') eq 'TableView')
+        {
+		# we must first create a temporary file
+		my ($fh, $filename) = tempfile( TEMPLATE => 'tempXXXXX',
+                        DIR => $mbl->gmodweb_html_tmp_sys_dir,
+                        SUFFIX => '.dat');
+		my ($wsfh, $wsfilename) = tempfile( TEMPLATE => 'tempXXXXX',
+                        DIR => $mbl->gmodweb_html_tmp_sys_dir,
+                        SUFFIX => '.jnlp');
+                # tagid Rvalue orfid nrdesc libraries
+                                                                                                                                                                                 
+                print $fh "tagid\tSequence\tR-Value\tOrfID\te-value\tdescription";
+                                                                                                                                                                                 
+                                                                                                                                                                                 
+                #Print the header row
+                my $header_row = '';
+                                                                                                                                                                                 
+                foreach my $val (@lib_array)
+                {
+                        $header_row .= "\t" . $val;
+                }
+
+                print $fh $header_row . "\n";
+                                                                                                                                                                                 
+                # Print results
+                my @tags = sort_hash(param('sort_by'));
+
+                foreach my $row(@tags)
+                {
+                        my $first = 1;
+                        my $row_val = '';
+                        my $tagid = $row;
+                        print $fh $tagid . "\t"; 
+                        print $fh $sequence_hash->{$tagid} . "\t";
+                        print $fh $R_hash->{$tagid} . "\t";
+                        print $fh $orfid_hash->{$tagid} . "\t";
+                        print $fh $nreval_hash->{$tagid} . "\t";
+                        print $fh $namedesc_hash->{$tagid} ;
+                        my $tmp_array = $result_hash->{$tagid};
+
+			my $count = 0;
+                        foreach my $col_val(@$tmp_array)
+                        {
+                                        $row_val .=  "\t" . sprintf("%.5f", ($col_val / $libtotalcount{$libs_chosen[$count]}) * 100);
+					$count++;
+			}
+
+                        print $fh  $row_val . "\n";
+                }
+        my @datfilename = split('/',$filename);
+        my $datlen = scalar @datfilename;
+        my $datfilename = $datfilename[$datlen-1];
+
+        my @webstartfilename = split('/',$wsfilename);
+        my $webstartlen = scalar @webstartfilename;
+        my $webstart = $webstartfilename[$webstartlen-1];
+
+
+print $wsfh '<?xml version="1.0" encoding="utf-8"?>
+     <!-- JNLP File for TableView Application -->
+<jnlp spec="1.0+"
+      codebase="http://www.ccgb.umn.edu/software/java"
+      href="';
+#print $wsfh 'http:' . $mbl->organism_web_server . $mbl->gmodweb_html_tmp_web_dir . '/' . $webstart;
+print $wsfh '">
+  <information>
+    <title>TableView Application</title>
+    <vendor>Center for Computational Genomics and Bioinformatics, University of Minnesota</vendor>
+    <homepage href="docs/TableViewUserGuide.html"/>
+    <description>TableView Application .</description>
+    <description kind="short">TableView Application viewing SAGE data</description>
+    <icon href="Images/TableView_small.gif"/>
+    <offline-allowed/>
+  </information>
+  <security> 
+    <all-permissions/> 
+  </security> 
+  <resources>
+    <j2se version="1.4+"/>
+    <j2se version="1.3+"/>
+    <jar href="lib/UMNGenomics.jar"/>
+    <jar href="lib/js.jar"  download="lazy"/>
+    <jar href="lib/classes12.zip"  download="lazy"/>
+    <jar href="lib/mysql.jar"  download="lazy"/>
+    <jar href="lib/postgreSQL.jar"  download="lazy"/>
+    <jar href="lib/colt/colt.jar"  download="lazy"/>
+    <jar href="lib/bsh.jar"  download="lazy"/>
+  </resources>
+  <application-desc main-class="edu.umn.genomics.table.TableView">
+    <argument>';
+print $wsfh 'http://' . $mbl->organism_web_server . $mbl->gmodweb_html_tmp_web_dir . '/' . $datfilename;
+print $wsfh '</argument>
+  </application-desc>
+</jnlp>
+';
+
+	print header();
+	print '<head><meta http-equiv="REFRESH" content="1; URL=' . $mbl->gmodweb_html_tmp_web_dir . '/' . $webstart . '"></head>';
+	print start_html();
+	print "Loading Java Web Start";
+	print end_html();
+        } # END TableView WEBSTART EXPORT
+
+
+	if(param('export_type') eq 'Tab Delimited')
+	{
+
+                print header( {
+                -content_type=>'application/txt; name="sageresults.txt"',
+                -content_disposition=>'attachment; filename=sageresults.txt',
+                -content_transfer_encoding=>'binary'}
+);
+                print "tagid\tSequence\tR-Value\tOrfID\te-value\tdescription";
+                                                                                                                                                                                 
+                                                                                                                                                                                 
+                #Print the header row
+                my $header_row = '';
+                                                                                                                                                                                 
+                foreach my $val (@lib_array)
+                {
+                        $header_row .= "\t" . $val;
+                }
+                                                                                                                                                                                 
+                print $header_row . "\n";
+                                                                                                                                                                                 
+                # Print results
+                my @tags = sort_hash(param('sort_by'));
+
+                foreach my $row(@tags)
+                {
+                        my $first = 1;
+                        my $row_val = '';
+                        my $tagid = $row;
+                        print $tagid . "\t";
+                        print $sequence_hash->{$tagid} . "\t";
+                        print $R_hash->{$tagid} . "\t";
+                        print $orfid_hash->{$tagid} . "\t";
+                        print $nreval_hash->{$tagid} . "\t";
+                        print $namedesc_hash->{$tagid} ;
+                        my $tmp_array = $result_hash->{$tagid};
+                        foreach my $col_val(@$tmp_array)
+                        {
+                                        $row_val .=  "\t" . $col_val ;
+                        }
+                        print  $row_val . "\n";
+                }
+
+
+	}
+
+	sub sort_hash 
+	{
+        	my $type = shift;
+	        my @return_array;
+
+	        if($type eq "Tag ID")
+	        {
+			if(param('sort_order') eq 'ascending')
+			{
+				@return_array = sort {$a <=> $b} keys %$result_hash;
+			} else
+			{
+	                	@return_array = sort {$b <=> $a} keys %$result_hash;
+			}
+	        } elsif($type eq "Sequence")
+	        {
+			if(param('sort_order') eq 'ascending')
+			{
+	                	@return_array = sort { $sequence_hash->{$b} cmp $sequence_hash->{$a} } keys %$sequence_hash;
+			} else
+			{
+				@return_array = sort { $sequence_hash->{$a} cmp $sequence_hash->{$b} } keys %$sequence_hash;
+			}
+	        } elsif($type eq "Description")
+		{
+			if(param('sort_order') eq 'ascending')
+			{
+                        	@return_array = sort { $namedesc_hash->{$b} cmp $namedesc_hash->{$a} } keys %$namedesc_hash;
+			} else
+			{
+				@return_array = sort { $namedesc_hash->{$a} cmp $namedesc_hash->{$b} } keys %$namedesc_hash;
+			}
+		} elsif($type eq "R-Value")
+		{
+			if(param('sort_order') eq 'ascending')
+			{
+				@return_array = sort { $R_hash->{$a} <=> $R_hash->{$b} } keys %$R_hash;
+			} else
+			{
+                        	@return_array = sort { $R_hash->{$b} <=> $R_hash->{$a} } keys %$R_hash;
+			}
+		} elsif($type eq "Cluster")
+		{
+			if(param('sort_order') eq 'ascending')
+			{
+				@return_array = sort { $cluster_hash->{$a} <=> $cluster_hash->{$b} } keys %$cluster_hash;
+			} else
+			{
+				@return_array = sort { $cluster_hash->{$b} <=> $cluster_hash->{$a} } keys %$cluster_hash;
+			}
+		} elsif($type eq "ORF ID")
+		{
+			if(param('sort_order') eq 'ascending')
+			{
+				@return_array = sort { $orfid_hash->{$a} <=> $orfid_hash->{$b} } keys %$orfid_hash;
+			} else
+			{
+				@return_array = sort { $orfid_hash->{$b} <=> $orfid_hash->{$a} } keys %$orfid_hash;
+			}
+		}
+
+	        return @return_array;
+	}
+
+	sub create_array
+	{
+		my $dataarray;
+		my $datapercentarray;
+		my $tagarray;
+		my $maskarray;
+		my $weightarray;
+		my $num_libs = scalar @lib_array;
+
+		# Create weight array
+		for(1..$num_libs)
+		{
+			push(@{$weightarray}, 1);
+		}
+		# Create mask array, tag array and dataarray
+		
+		while(my ($key, $val) = each(%$result_hash))
+		{
+			my $thisdatarow;
+			my $count = 0;
+			my $median = $mbl->get_median($val);
+			foreach my $col(@{$val})
+			{
+				my $tagval = $col;
+				# normalize
+				my $multip = $highest_count / $libtotalcount{$libs_chosen[$count]};
+				$tagval = $tagval * $multip;
+
+				# log transform
+				$tagval = $mbl->log10($tagval);
+				# Median Center 
+				$tagval = $tagval - $median;
+	
+				push(@{$thisdatarow}, $tagval);	
+				#push(@{$thisdatarow}, sprintf("%.8f", ($col / $libtotalcount{$libs_chosen[$count]})*100 ) );
+				$count++;
+			}
+			push(@{$dataarray}, $val ) ;
+			push(@{$datapercentarray}, $thisdatarow);
+			
+			push(@{$tagarray}, $key);
+			my $tmp_array;
+			# Create mask array for this line
+			foreach (@{$val})
+			{
+				push (@{$tmp_array}, 1);
+			}
+			push(@{$maskarray}, $tmp_array);
+		}
+
+		return ($tagarray, $dataarray, $datapercentarray, $maskarray, $weightarray);
+	}
+
+	sub create_cluster
+	{
+		my $tagarray = shift;
+		my $dataarray = shift;
+		my $datapercentarray = shift;
+		my $maskarray = shift;
+		my $weightarray = shift;
+		my $clusterdataarray = $datapercentarray;
+
+		if(param('cluster_data_type') eq 'raw sequence count')
+		{
+			$clusterdataarray = $dataarray;
+		}
+
+		my %params = (
+			nclusters =>         param('num_clusters'),
+			transpose =>         0,
+			npass     =>       100,
+			method    =>       param('average_method'),
+			dist      =>       param('distance_method'),
+		);
+		my ($clusters, $centroids, $error, $found);
+		my ($i,$j);
+	                                                                                                                             
+		$i=0;$j=0;
+		($clusters, $centroids, $error, $found) = kcluster(                                                                                                                     
+	        	%params,
+				data      =>    $clusterdataarray,
+				mask      =>    $maskarray,
+				weight    =>  $weightarray,
+			);
+		$i=0;$j=0;
+		foreach(@{$clusters}) 
+		{
+		        $cluster_hash->{$tagarray->[$i]} = $_;
+			$i++
+		}
+
+		
+	}
+
+
+} # END IF PARAM
+
+sub log10 {
+        my $n = shift;
+        return log($n)/log(10);
+}
+
+untie(%session);
+
+[% END %]

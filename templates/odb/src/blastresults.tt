@@ -1,0 +1,67 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+<table class="searchtitle" border=0 width="100%">
+	<tr>
+		<td width="70%"> [% INCLUDE menu %]</small></td>
+		<td align=right><b>Assembly Data: [% database_version %]</b></td>
+	</tr>
+</table>
+
+<br>
+
+<table border="0" cellspacing="0" width="100%">
+
+	<tr>
+		<td>
+		<center><p><font size="+3" color="red"><b>BLAST</b></font></p></center>
+		[% html_subtitle %]
+		
+		</td>
+	</tr>
+	<tr>
+		<td><br></td>
+	</tr>
+	<tr>
+		<td class="searchtitle" valign="middle">
+		<center>
+		
+			[% perl_searchtool %]
+
+		</center>
+		</td>
+	</tr>
+
+</table>
+
+<br>
+
+<table border="0" width=100%>	
+	<tr>
+		<td valign="top">
+	[% INCLUDE blast_results %]
+		</td>
+	</tr>
+
+</table>
+
+<hr>
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_funding %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]
+

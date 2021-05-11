@@ -1,0 +1,37 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+<center><p><font size="+4" color="red"><b>Upload Annotations</b></font></p></center>
+<hr>
+
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+			[% INCLUDE bulkannotation_tool %]
+			[% html_column %]
+
+		</td>
+	</tr>
+
+</table>
+
+<hr>
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

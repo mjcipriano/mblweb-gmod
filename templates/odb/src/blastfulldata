@@ -1,0 +1,24 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $report = $mbl->get_full_blast_report(param('idname'), param('type'), param('db'));
+
+if($report =~ /\<html\>/i)
+{
+	print $report;
+} else
+{
+	print '<pre>' . $report . '</pre>';
+}
+
+
+[% END %]

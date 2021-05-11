@@ -1,0 +1,244 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>MAKE_IMAGES_HOWTO</title>
+<link rev="made" href="mailto:root@localhost" />
+</head>
+
+<body style="background-color: white">
+
+<p><a name="__index__"></a></p>
+<!-- INDEX BEGIN -->
+
+<ul>
+
+	<li><a href="#gbrowse_img__cgi_script_to_generate_genome_images_via_the_generic_genome_browser">gbrowse_img - CGI script to generate genome images via the Generic Genome Browser</a></li>
+	<li><a href="#synopsis">SYNOPSIS</a></li>
+	<li><a href="#description">DESCRIPTION</a></li>
+	<li><a href="#cgi_arguments">CGI arguments</a></li>
+	<li><a href="#author">AUTHOR</a></li>
+</ul>
+<!-- INDEX END -->
+
+<hr />
+<p>
+</p>
+<h1><a name="gbrowse_img__cgi_script_to_generate_genome_images_via_the_generic_genome_browser">gbrowse_img - CGI script to generate genome images via the Generic Genome Browser</a></h1>
+<p>
+</p>
+<hr />
+<h1><a name="synopsis">SYNOPSIS</a></h1>
+<pre>
+  &lt;img src=&quot;<a href="http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=mec-3;width=400">http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=mec-3;width=400</a>&quot;&gt;</pre>
+<p>Will generate this picture:</p>
+<img src="http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=mec-3;width=400"><br><pre>
+   &lt;a href=&quot;<a href="http://www.wormbase.org/db/seq/gbrowse_img?list=sources">http://www.wormbase.org/db/seq/gbrowse_img?list=sources</a>&quot;&gt;list&lt;/a&gt;</pre>
+<p>Will return this document:</p>
+<pre>
+  ## Sources
+  human
+  ws77
+  worm_pmap
+  embl
+  fly
+  briggsae
+  yeast
+  wormbase</pre>
+<pre>
+   &lt;a href=&quot;<a href="http://www.wormbase.org/db/seq/gbrowse_img?list=types">http://www.wormbase.org/db/seq/gbrowse_img?list=types</a>&quot;&gt;types&lt;/a&gt;</pre>
+<p>Will return this document:</p>
+<pre>
+        ## Feature types for source yeast
+        Genes   Named gene      default
+        ORFs    ORF     default
+        CDS     CDS     
+        tRNAs   tRNAs   default
+        Centro  Centromeres     
+        Transp  Transposons     
+        LTRs    Long Terminal Repeats   
+        TranslationF    3-frame translation (forward)   
+        DNA/GC Content          
+        TranslationR    3-frame translation (reverse)   
+        ncRNA   Noncoding RNAs</pre>
+<p>
+</p>
+<hr />
+<h1><a name="description">DESCRIPTION</a></h1>
+<p>This CGI script is an interface to the Generic Genome Browser for the
+purpose of retrieving dynamic images of a region of the genome. It can
+be used as the destination of an &lt;img&gt; tag like this:</p>
+<pre>
+  &lt;img src=&quot;<a href="http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=III:1">http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=III:1</a> ..1000&quot;&gt;</pre>
+<p>The script can also be used to superimpose one or more external
+features onto the display, for example for the purpose of displaying
+BLAST hits, an STS or a knockout in the context of the genome.</p>
+<p>
+</p>
+<hr />
+<h1><a name="cgi_arguments">CGI arguments</a></h1>
+<p>The script recognizes the following CGI arguments, which can be passed
+either as GET or POST argument=value pairs. Argument pairs must be
+separated by semicolons (preferred) or by ampersands.</p>
+<pre>
+   Argument                  Description
+   list     get certain types of configuration information
+   source   database name
+   name     genomic landmark or range
+   type     list of feature names
+   width    desired width of image
+   options  list of track options (compact, labeled, etc)
+   add      additional features to superimpose on image
+   abs      display position in absolute coordinates</pre>
+<p>The arguments are explained in more detail here</p>
+<dl>
+<dt><strong><a name="item_list">list</a></strong><br />
+</dt>
+<dd>
+If this argument is present, it will cause the script to dump
+out various types of information in plain text form. Currently
+the two values for this argument are sources, to dump out the
+list of data sources, and types, to dump out the list of
+configured types. For list=sources, the script will return a
+simple text list of the data source names. For list=types, the
+script will return a three-column tab-delimited list giving the
+track names and feature types corresponding to the
+currently-selected data source. The format is as follows:
+</dd>
+<dd>
+<pre>
+   Mnemonic &lt;tab&gt; Full description of feature &lt;tab&gt; [default]</pre>
+</dd>
+<dd>
+<p>The third column contains the word ``default'' if the track will
+be shown by default when no type argument is provided.</p>
+</dd>
+<p></p>
+<dt><strong><a name="item_source">source</a></strong><br />
+</dt>
+<dd>
+This argument specifies the database for the images. The list
+of sources can be found using list=sources.
+</dd>
+<p></p>
+<dt><strong><a name="item_name">name</a></strong><br />
+</dt>
+<dd>
+This argument specifies the region of the genome to be
+displayed. Several forms are recognized:
+</dd>
+<dl>
+<dt><strong><a name="item_name_3dlandmark">name=Landmark</a></strong><br />
+</dt>
+<dd>
+Display the landmark named ``Landmark''. Valid landmark names include
+chromosomes, contigs, clones, STSs, predicted genes, and any other
+landmark that the administrator has designated. Be careful when
+fetching large landmarks such as whole chromosomes!
+</dd>
+<p></p>
+<dt><strong><a name="item_name_3dlandmark_3astart_2e_2eend">name=Landmark:start..end</a></strong><br />
+</dt>
+<dd>
+Display the region between start and end relative to ``Landmark''.
+</dd>
+<p></p>
+<dt><strong><a name="item_name_3dclass_3alandmark">name=Class:Landmark</a></strong><br />
+</dt>
+<dd>
+Display ``Landmark'', restricting to a particular class, such as
+``PCR_Product''. The list of classes is under the control of the
+database administrator and is not yet available through this interface.
+</dd>
+<p></p>
+<dt><strong><a name="item_name_3dclass_3alandmark_3astart_2e_2eend">name=Class:Landmark:start..end</a></strong><br />
+</dt>
+<dd>
+As above, but restricted to the designated range.
+</dd>
+<p></p></dl>
+<dt><strong><a name="item_type">type</a></strong><br />
+</dt>
+<dd>
+This argument lists the feature types to display. The value of
+this argument is a list of mnemonics separated by spaces (``+''
+characters when URL-escaped). For example:
+
+</dd>
+<dd>
+<pre>
+
+  &lt;img src=&quot;<a href="http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=mec-3;type=tRNA+NG+WABA+CG+ESTB">http://www.wormbase.org/db/seq/gbrowse_img/wormbase?name=mec-3;type=tRNA+NG+WABA+CG+ESTB</a>&quot;&gt;</pre>
+</dd>
+<dd>
+<p>Multiple type= arguments will be combined to form a single
+space-delimited list.</p>
+</dd>
+<p></p>
+<dt><strong><a name="item_options">options</a></strong><br />
+</dt>
+<dd>
+A space-delimited list (``+'' characters when URL-escaped) of
+mnemonic/option pairs describing how features should be
+formatted. Options are integers from 0 to 3, where 0=auto,
+1=compact, 2=expanded, 3=expanded and labeled. For example, to
+specify that the tRNA and NG tracks should always be expanded
+and labeled, but that the WABA track should be compact, use:
+</dd>
+<dd>
+<pre>
+   options=tRNA+3+NG+3+WABA+1</pre>
+</dd>
+<p></p>
+<dt><strong><a name="item_add">add</a></strong><br />
+</dt>
+<dd>
+Superimpose one or more additional features on top of the view.
+Features are specified as space (``+'') delimited lists in the
+following format:
+</dd>
+<dd>
+<pre>
+   add=Landmark+Type+Name+start..end,start..end,start..end</pre>
+</dd>
+<dd>
+<p>``Landmark'' is the landmark name, ``Type'' is a descriptive type
+that will be printed in the image caption, ``Name'' is a name for
+the feature to be printed above it, and start..end is a
+comma-delimited list of ranges for discontinuous feature. Names
+that contain white space must be quoted, for example ``BLAST
+hit''. Note that this all has to be URL-escaped, so an
+additional feature named ``Your Sequence'', type ``Blast Hit'',
+that is located on chromosome III in a gapped range between
+20000 and 22000, will be formatted as:</p>
+</dd>
+<dd>
+<pre>
+   add=III+%22Blast%20Hit%22+%22Your%20Sequence%22+20000..21000,21550..22000</pre>
+</dd>
+<dd>
+<p>Multiple add= arguments are allowed.</p>
+</dd>
+<p></p>
+<dt><strong><a name="item_abs">abs</a></strong><br />
+</dt>
+<dd>
+Use absolute (chromosome) coordinates when displaying the
+image. An argument of abs=1 will turn on absolute coordinate
+addressing. An argument of abs=0 will use relative coordinate
+addressing (this is the default).
+</dd>
+<p></p></dl>
+<p>
+</p>
+<hr />
+<h1><a name="author">AUTHOR</a></h1>
+<p>Lincoln Stein <a href="mailto:lstein@cshl.org">lstein@cshl.org</a></p>
+<p>Copyright (c) 2002 Cold Spring Harbor Laboratory</p>
+<p>This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.</p>
+<p>For additional help, see The GMOD Project pages.
+</p>
+
+</body>
+
+</html>

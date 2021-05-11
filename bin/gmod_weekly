@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Remove all files that have not been accessed in 2 weeks
+/usr/sbin/tmpwatch 336 /xraid/bioware/gmod/mblweb-gmod/sessions/sessions /xraid/bioware/gmod/mblweb-gmod/sessions/lock /xraid/bioware/gmod/mblweb-gmod/html/temp /xraid/bioware/gmod/mblweb-gmod/html/gbrowse/tmp

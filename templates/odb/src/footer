@@ -1,0 +1,19 @@
+<table border=0 width="100%" class="databody">
+        <tr>
+                <td width="48%">
+<p>
+                [% footer_projectenquiries %]
+<p>
+                </td>
+                <td width="4%">
+                </td>
+                <td width="48%">
+<p>
+                [% footer_gmodenquiries %]
+<p>
+                </td>
+        </tr>
+                                                                                                                                                                                                                                                       
+</table>
+</body>
+</html>

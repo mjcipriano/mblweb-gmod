@@ -1,0 +1,37 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+<table border="0" cellspacing="0" width="100%">
+ 
+        <tr>
+                <td>
+ 
+                	[% html_header %]
+ 
+                </td>
+        </tr>
+        <tr>
+                <td><br></td>
+        </tr>
+</table>
+
+<br>
+
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+
+			[% INCLUDE edit_orf %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

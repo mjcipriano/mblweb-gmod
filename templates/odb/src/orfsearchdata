@@ -1,0 +1,138 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+  
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+my $session_id = $stash->get('session_id');
+my %session;
+
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+
+
+my $search_word = param('searchterm');
+$search_word =~ s/%([\dA-Fa-f]{2})/pack("C", hex($1))/eg;
+my @terms = split(',', $search_word);
+my %orfhash;
+my %deleted_orfs;
+
+foreach my $term(@terms)
+{
+	chomp($term);
+
+	# remove trailing and leading whitespace
+	$term =~ s/^\s+//;
+	$term =~ s/\s+$//;
+
+	if($term =~ /^\s*$/)
+	{
+		# Do nothing
+	} elsif($term =~ /sagetag\:/)
+	{
+		my ($tag) = $term =~ /sagetag\:(\d+)/;
+		if($mbl->check_sagetag_exists($tag, $session{'login_id'}))
+		{
+			my $orfinfo = $mbl->get_sage_orf_info($tag);
+			if($orfinfo)
+			{
+				$orfhash{$orfinfo->{orfid}} = 1;
+			}
+		}
+	} elsif($term =~ /^\d+$/)
+	{
+		if($mbl->check_orf_existance($term))
+		{
+			$orfhash{$term} = 1;
+		} else
+		{
+			if($mbl->check_orf_existance($term, 1))
+			{
+				$orfhash{$term} = 1;
+				$deleted_orfs{$term} = 1;
+			}
+		}
+
+	} elsif($term =~ /orf\:/)
+	{
+		my ($orfid) = $term =~ /orf\:(\d+)/;
+
+		if($mbl->check_orf_existance($orfid))
+		{
+			$orfhash{$orfid} = 1;
+		} else
+		{
+			if($mbl->check_orf_existance($orfid, 1))
+			{
+				$orfhash{$orfid} = 1;
+				$deleted_orfs{$orfid} = 1;
+			}
+		}
+
+			
+	} elsif($term =~ /domain\:/)
+	{
+		my ($domain_term) = $term =~ /domain\:(.+)/;
+		my $orfarray = $mbl->get_orf_by_domain($domain_term);
+
+		foreach my $orfid (@{$orfarray})
+		{
+			if($mbl->check_orf_existance($orfid))
+			{
+				$orfhash{$orfid} = 1;
+			}
+		}
+
+	} else
+	{
+		my $orfarray = $mbl->get_orfs_by_keyword($term);
+		foreach my $orfid (@{$orfarray})
+		{
+			$orfhash{$orfid} = 1;
+		}
+	}
+}
+
+
+if(keys %orfhash > 0)
+{
+	# Sort the tags by orfid
+
+	my @sort_array = sort { $a <=> $b } keys %orfhash;
+
+	print "<table border=1 width='100%'><tr><td width='50'>ORF ID</td><td>Annotation</td></tr>";
+	foreach my $orfid(@sort_array)
+	{	
+		print "<tr>";
+
+		# orfid
+		print "<td>" . $mbl->orf_link($orfid) . "</td>";
+
+		# Description
+		if($deleted_orfs{$orfid})
+		{
+			print "<td><b>This ORF has been discontinued</b></td>";
+		} else
+		{
+			print "<td>" . $mbl->get_newest_annotation($orfid) . "&nbsp;</td>";
+		}
+
+	}
+} else
+{
+	print "<h2>No matches found</h2>\n";
+
+}
+
+untie(%session);
+
+[% END %]

@@ -1,0 +1,188 @@
+[% PERL %]
+
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh;
+
+use strict;
+	my $session_id = $stash->get('session_id');
+                                                                                                                                                                                                                                                     
+	my %session;
+
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+	my $sage_advanced = '';
+ 
+	param(-name=>'page', -value=>'orfresults');
+
+        # Get the labels to use as the library names
+        my $libh;
+                                                                                                                                                                                                                                                     
+        # Find out which libraries we have access to
+                                                                                                                                                                                                                                                     
+        $libh = $mbl->query('get_library_access');
+        $libh->execute($session{'login_id'});
+                                                                                                                                                                                                                                                     
+        my %lib_hash;
+        my @lib_array;
+        my $fullnameh = $dbh->prepare("select name from sage_library_names where library = ?");
+        while(my $lib_row = $libh->fetchrow_hashref)
+        {
+                                                                                                                                                                                                                                                     
+                $fullnameh->execute($lib_row->{library});
+                my $this_fullname = $fullnameh->fetchrow_hashref;
+                %lib_hash->{$lib_row->{library}} = $this_fullname->{name};
+                push(@lib_array, $lib_row->{library});
+                                                                                                                                                                                                                                                     
+        }
+
+        if(scalar @lib_array > 1)
+        {
+
+	        my $library_string = '';
+                                                                                                                                                                                                                                                     
+	        my $liballh = $dbh->prepare("select distinct library from sage_results");
+	        $liballh->execute();
+	        $library_string .= '<table border=0 cellspacing=0>';
+	        my @lib_array_libs;
+	        while(my $lib_row = $liballh->fetchrow_hashref)
+	        {
+	                $library_string .= '<tr><td>';
+	                $fullnameh->execute($lib_row->{library});
+	                my $this_fullname = $fullnameh->fetchrow_hashref;
+	                if($lib_hash{$lib_row->{library}})
+	                {
+	                        $library_string .= '<input type="checkbox" name="libraries" value="' . $lib_row->{library} . '">';
+	                        push(@lib_array_libs, $lib_row->{library});
+	                } else
+	                {
+	                }
+	                $library_string .= '</td><td nowrap>';
+                                                                                                                                                                                                                                                     
+	                $library_string .=  $this_fullname->{name} . "</td></tr>\n";
+	        }
+	        $library_string .= '</table>';
+                                                                                                                                                                                                                                                     
+	        my @lib_array_libs_all = @lib_array_libs;
+	        # unshift(@lib_array_libs_all, 'All');
+
+		$sage_advanced .= 	'<b>Regulation</b>'. p.
+                                  	'If this option is selected, peptides matching the search criteria must additionally be from genes with the regulation pattern chosen as obtained from Serial Analysis of Gene Expression data. A sum of the percent expression is taken for all sense tags for a particular orf. (<i>Note: A orf might be shown as upregulated or downregulated if total sampling between the libraries differ and the raw tag frequencies are the same. To be exlusive, the other library must have no sense sage tags seen. Sage tags were assigned to orfs based first on EST data if available, and then via an electronic assignment by averaging the 3 prime UTR length.</i>)' .  p.
+					center('Is ' . popup_menu(-name=>"regulation", -values=>["Not Relevant", "upregulated", "downregulated", "exclusive"]) .
+                                                                '<br>In ' .
+                                                                popup_menu(-name=>"regulation_regulated_in", -values=>\@lib_array_libs, -labels=>\%lib_hash) .
+                                                                '<br>Vs ' .
+                                                                popup_menu(-name=>"regulation_regulated_vs", -values=>\@lib_array_libs_all, -labels=>\%lib_hash) ) . p . br ;
+
+
+	}
+
+	print '<center>
+	<p><font size="+4" color="red"><b>ORF Analysis</b></font></p> </center> <hr>';
+
+
+	# Check if certain attributes are needed
+
+	print
+		start_form( action=>$mbl->organism_home, method=>'POST'),
+		center(
+			table( {-border=>'0', -width=>'100%', -cellspacing=>'50'},
+				TR(
+					td( {-width=>"50%", -valign=>'top'},
+						center(h2("Search Criteria")),p,br,
+						b("Select Precompiled BLAST Reports to Search"),
+						center(
+							table(
+								TR(
+									td(
+										checkbox_group( -name=>'databases',
+										-values=>['Swissprot','Non-Redundant GenBank'],
+										-defaults=>['Swissprot'], -linebreak=>'true')
+									)
+								)
+							)
+						),p,hr,p, 
+
+						b("Keyword(s) for searching BLAST reports."), " Comma separated items are combined with <b>OR</b> automatically.  The default setting does not apply a keyword filter.", p,
+
+						'<b>BLAST results must include hits to the following specific organisms</b> (use <a href="http://www.ncbi.nlm.nih.gov/Taxonomy/taxonomyhome.html/" target="_new">NCBI Taxonomy Names or ID Numbers</a>).  Comma separated items are combined with <b>OR</b> automatically.  The default setting does not apply a taxonomy filter. You must include an E-Value if you want to search using this section.',p,
+						center(
+							'Keyword:' . textfield({-name=>"desc", -size=>'50'}),br,
+							'Taxonomy:' . textfield({-name=>"contained_within", -default=>'1'}), 
+							'E-Value:' . popup_menu(-name=>"contained_max_e_value",
+								   -values=>["Not Relevant", "1e-100", "1e-90", "1e-80", "1e-70", "1e-60", "1e-50", "1e-40", "1e-30", "1e-20", "1e-10","1e-9","1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"], -default=>"Not Relevant")
+						),p,
+						hr,p,
+						b("Excluded keyword(s) for searching BLAST reports."), " Comma separated items are combined with <b>OR</b> automatically.  The default setting does not apply a keyword filter.", p,
+
+						'<b>BLAST results cannot include hits to the following specific organisms</b> (use <a href="http://www.ncbi.nlm.nih.gov/Taxonomy/taxonomyhome.html/" target="_new">NCBI Taxonomy Names or ID Numbers</a>).  Comma separated items are combined with <b>OR</b> automatically. The default setting does not apply a taxonomy filter. You must include an E-Value if you want to search using this section.',p,
+						center(
+						'Keyword:' . textfield({-name=>"not_desc", -size=>'50'}),br,
+							'Taxonomy:' . textfield({-name=>"notcontained_within"}), 
+							'E-Value:' . popup_menu(-name=>"notcontained_max_e_value",
+								   -values=>["Not Relevant", "1e-100", "1e-90", "1e-80", "1e-70", "1e-60", "1e-50", "1e-40", "1e-30", "1e-20", "1e-10","1e-9","1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"], -default=>"Not Relevant")
+						),hr,p,br,
+						i("Note on comma separated items: the use of <b>OR</b> means that both separate and joint instances of search terms will be accepted.  For example, a search for <b>Entamoeba, Trichomonas</b> will find all hits with Entamoeba or Trichomonas or both."),p,hr,p,
+						'<b>BLAST hit to MITOP</b>', p,
+						'If this option is selected, peptides matching the search criteria must additionally have a significant BLASTP hit to the <a href="http://ihg.gsf.de/mitop2/start.jsp" target="_new">Database for Mitochondria-Related Proteins</a>.', p,
+                                		center(
+							popup_menu(-name=>"mitop_fg",
+			                                        -values=>["Not Relevant", "Hits Present", "Hits Absent"]),
+							popup_menu(-name=>"mitop_max_e_value",
+	                                        		-values=>["1e-100", "1e-90", "1e-80", "1e-70", "1e-60", "1e-50", "1e-40", "1e-30", "1e-20", "1e-10","1e-9","1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"], -default=>"1e-10")
+						),p,
+					),
+					td( { -width=>"50%", -valign=>'top'},
+						'<b>Interpro hit</b>',p,
+						'If a domain is listed below, peptides with that domain as defined by <a href="http://www.ebi.ac.uk/interpro/">Interpro</a> will be listed in the search.  Use any string within the domain name or description. Comma separated items are combined with <b>OR</b> automatically.  You may also place an AND between search terms to find multi-domain proteins.(<i>ex. <b>zinc AND kinase, topoisomerase</b> will find all proteins with either a zinc finger domain and a kinase domain (multi domain protien) OR proteins with a topoisomerase domain</i>)', p, 
+						center(
+							
+							textfield({-name=>"interpro_domains"}),
+							popup_menu(-name=>"interpro_max_e_value",
+								-values=>["1e-100", "1e-90", "1e-80", "1e-70", "1e-60", "1e-50", "1e-40", "1e-30", "1e-20", "1e-10","1e-9","1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"], -default=>"1e-10")
+						),p,br,
+						'<b>Interacting Domains</b>',p,
+						'If this option is selected, peptides containg an interacting domain as defined by <a href="http://www.sanger.ac.uk/Software/Pfam/iPfam/">iPfam</a> with the Pfam domain entered in will be returned.Comma separated items are combined with <b>OR</b> automatically. Search terms must be the short Pfam name <i>(ex. 1thr, trypsin)</i>', p, 
+						center(
+							textfield({-name=>"domains_interaction"}),
+							popup_menu(-name=>"domains_interaction_max_e_value",
+								-values=>["1e-100", "1e-90", "1e-80", "1e-70", "1e-60", "1e-50", "1e-40", "1e-30", "1e-20", "1e-10","1e-9","1e-8", "1e-7", "1e-6", "1e-5", "1e-4", "1e-3"], -default=>"1e-10")
+						),p,br,
+						'<b>Transcription</b>', p, 
+						'If this option is selected, peptides matching the search criteria must additionally be from genes with transcription detected by Serial Analysis of Gene Expression, such that only genes with at least one assigned SAGE tag will be accepted.  All available SAGE libraries are used in this search, even if the raw data has not yet been released to the public.', p,
+						center('<input type="checkbox" name="sage_expression" value="yes" />Evidence of Transcription Must Exist'), p, br,
+						$sage_advanced,
+						'<b>Signal Peptide/Anchor</b>',p,
+						'If this option is selected, you may restrict the analysis to peptides containg or not containing a Signal Peptide or Signal Anchor as defined by <a href="http://www.cbs.dtu.dk/services/SignalP/abstract.php">SignalP</a>.(<i>A protein will be predicted as having either a Signal peptide, a Signal anchor, or as being a non-secretory protein</i>)', p, 
+						center(
+							popup_menu(-name=>"signal_peptide",
+								-values=>["Not Relevant", "Signal Peptide", "Signal Anchor", "Non-Secretory"], -default=>"Not Relevant"), popup_menu(-name=>"signal_peptide_qual", -values=>["Not Relevant", "Present", "Absent"], -default=>"Not Relevant")
+						),p,br,
+						'<b>Transmembrane Domain</b>',p,
+						'If this option is selected, you may restrict the analysis to peptides containg or not containing a Transmembrane Domain as defined by <a href="http://www.cbs.dtu.dk/services/TMHMM/TMHMM2.0b.guide.php">tmhmm</a>.', p, 
+						center(
+							popup_menu(-name=>"transmembrane_domain",
+								-values=>["Not Relevant", "Present", "Absent"], -default=>"Not Relevant")
+						),p,br,
+					)
+				)
+			),
+			center(b('View Data As'), popup_menu(-name=>"export_type",
+	                                        -values=>["HTML", "Tab Delimited", "FASTA Amino Acid Sequences", "Fasta Nucleotide Sequences"])),
+			hidden(-name=>'organism', -value=>$mbl->organism),
+			hidden(-name=>'page', -value=>'orfresults'),
+			hidden(-name=>'noheader', -value=>'T'),
+			p,
+			submit,
+			end_form
+		);
+		
+
+[% END %]

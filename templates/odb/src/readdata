@@ -1,0 +1,60 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+print "<h4>Read: ";
+print '<a href="' . $mbl->gbrowse_organism_cgi . '?name=read:';
+print  param('read');
+print '">';
+print param('read');
+print "</a></h4>";
+print "<br>\n";
+
+print '<center><table width="80%"><tr><td bgcolor="blue"><font color="white">Requested Read</font></td><td bgcolor="blue"><font color="white">Partner Read</font></td></tr>';
+print '<tr><td>';
+my $read_table =  $mbl->get_read_table(param('read'));
+if($read_table)
+{
+	my $read_sequence = $mbl->get_read_sequence_trim(param('read'));
+	print "<table width=50%>";
+	print "<tr><td><b>Download:</b></td><td>" . $mbl->read_fasta_link(param('read'), 'Fasta Sequence') . "</td></tr>";
+	print "<tr><td><b>BLAST Against own Genome:</b></td><td>" . $mbl->gblast_form($read_sequence, 'blastn', $mbl->organism, 'BLAST NT Sequence Against Contigs', param('read')) . "</td></tr>";
+	print "</table>";
+	print $read_table;
+} else
+{
+	print "Read Not Found";
+}
+print '</td><td>';
+
+my $partner_read = $mbl->get_read_partner(param('read'));
+
+
+if($partner_read)
+{
+	my $partner_table =  $mbl->get_read_table($partner_read);
+	my $partner_read_sequence = $mbl->get_read_sequence_trim($partner_read);
+	print "<table width=50%>";
+        print "<tr><td><b>Download:</b></td><td>" . $mbl->read_fasta_link($partner_read, 'Fasta Sequence') . "</td></tr>";
+        print "<tr><td><b>Blast Vs own Genome:</b></td><td>" . $mbl->gblast_form($partner_read_sequence, 'blastn', $mbl->organism, 'BLAST NT Sequence Against Contigs', $partner_read) . "</td></tr>";
+        print "</table>";
+	print $partner_table;
+} else
+{
+	print "No Partner Found";
+}
+
+print '</td></tr></table></center>';
+
+print '<p><center><img src="/perl/graph_qual?organism=' . $mbl->organism . '&read_name=' . param('read') . '"></center>';
+
+[% END %]

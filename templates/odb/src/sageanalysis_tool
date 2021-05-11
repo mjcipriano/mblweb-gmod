@@ -1,0 +1,249 @@
+[% PERL %]
+
+use Mbl;
+use CGI qw(:all);
+use CGI::Pretty;
+use File::Temp qw/ tempfile tempdir /;
+use Algorithm::Cluster;
+use DBI;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+ 
+my %session;
+#%session = %{$mbl->get_session(cookie('SESSION_ID'), \%session)};
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+ 
+ 
+ 
+if(!param('libraries'))
+{
+
+	param(-name=>'page', -value=>'sageresults');
+
+	# Get the labels to use as the library names
+	my $libh;
+
+	# Find out which libraries we have access to
+
+	$libh = $mbl->query('get_library_access');
+	$libh->execute($session{'login_id'});
+
+	my %lib_hash;
+	my @lib_array;
+	my $fullnameh = $dbh->prepare("select name from sage_library_names where library = ?");
+	while(my $lib_row = $libh->fetchrow_hashref)
+	{
+		
+		$fullnameh->execute($lib_row->{library});
+		my $this_fullname = $fullnameh->fetchrow_hashref;
+		%lib_hash->{$lib_row->{library}} = $this_fullname->{name};
+		push(@lib_array, $lib_row->{library});
+		
+	}
+	if(scalar @lib_array eq 0)
+	{
+		print "<h2>You must login in order to access this tool</h2><br>";
+	}
+
+	my $library_string = '';
+	
+	my $liballh = $dbh->prepare("select distinct library from sage_results");
+	$liballh->execute();
+	$library_string .= '<table border=0 cellspacing=0>';
+	my @lib_array_libs;
+	while(my $lib_row = $liballh->fetchrow_hashref)
+	{
+		$library_string .= '<tr><td>';
+		$fullnameh->execute($lib_row->{library});
+		my $this_fullname = $fullnameh->fetchrow_hashref;
+		if($lib_hash{$lib_row->{library}})
+		{
+			$library_string .= '<input type="checkbox" name="libraries" value="' . $lib_row->{library} . '">';
+			push(@lib_array_libs, $lib_row->{library});
+		} else
+		{
+		}
+		$library_string .= '</td><td nowrap>';
+
+		$library_string .=  $this_fullname->{name} . "</td></tr>\n";
+	}
+	$library_string .= '</table>';
+
+	my @lib_array_libs_all = @lib_array_libs;
+	unshift(@lib_array_libs_all, 'All');
+
+	my $distance_methods = ['c', 'a', 'u', 'x', 's', 'k', 'e', 'h', 'b'];
+	my %distance_methods_label = (
+					c=>"Peason correlation coefficient",
+					a=>"Absolute value of Peason correlarion coefficient",
+					u=>"Uncentered Pearson correlation",
+					x=>"Absolute uncentered Pearson correlation",
+					s=>"Spearman's rank correlation",
+					k=>"Kendall's tau",
+					e=>"Euclidean distance",
+					h=>"Harmonically summed Euclidean distance",
+					b=>"City-block distance",
+				);
+	my %average_method_label = (
+					a=>"arithmic mean",
+					m=>"median"
+				);
+
+
+	# If we do not see any libraries, tell the user they must login.
+	my $login_error = "";
+	if((scalar @lib_array) == 0)
+	{
+		$login_error = "You must <a href=\"?page=login\">login</a> to have access to the sage libraries";
+	}
+
+#checkbox_group(     -name=>'libraries',
+#                                                                        -values=>\@lib_array,
+#                                                                        -defaults=>\@lib_array,
+#                                                                        -linebreak=>"true",
+#                                                                        -labels=>\%lib_hash)), $login_error
+#			                                td("Show Description as:"),
+#			                                td(popup_menu(-name=>"desc_type",
+#			                                        -values=>["orf annotation only", "top orf nr blast hit only", "top sagetag blast hit only", "combination"], -default=>'combination'));
+#                                                        td(checkbox_group( -name=>'do_cluster',
+#                                                                -values=>'T',
+#                                                                -defaults=>['F']) )
+#                                                        td(popup_menu(-name=>"cluster_type",
+#                                                              -values=>["kmeans/median"]))
+#                                                        td(popup_menu(-name=>"distance_method", -values=>$distance_methods, -default=>'c', -labels=>\%distance_methods_label))
+#                                                        td(popup_menu(-name=>"average_method", -values=>['a', 'm'], -labels=>\%average_method_label, -default=>'m'))
+#                                                        td(popup_menu(-name=>"num_clusters", -values=>[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25], -default=>10))
+#                                                        td(popup_menu(-name=>"cluster_data_type", -values=>['percent expression', 'raw sequence count'], -default=>'percent expression'))
+
+
+	print "<center>";
+	print   
+		start_form( action=>$mbl->organism_home, method=>'POST'),
+		table( {-border=>0, -width=>"100%"},
+			TR( {-valign=>'top'},
+				td( {-width=>"50%"},
+					center(
+						table({-border=>0, -width=>'80%', -cellpadding=>"4"},
+							TR(  {-valign=>'top'},
+								td("	
+									<b>Data Access</b>
+									<p><a href=\"?page=login\">Login</a> to access all SAGE libraries (SAGE Consortium members only).  
+									Data from all libraries will be publicly released upon publication.</p><br>")
+							),
+							TR(
+								td("<b>Select Libraries</b><br>&nbsp;")
+							),
+							TR( 
+								td( center($library_string, $login_error) . "<br>&nbsp;")
+							),
+							TR(
+								td(center(submit(-name=>"Start Search")))
+							)
+						)
+					)
+				),
+				td(center(
+					table( {-border=>0, -width=>'80%', -cellpadding=>"4"},
+						TR(
+							td( b("Minimum Tag Count")), 
+							td(textfield({-name=>"min_seq_count", -default=>"1", -size=>5}))
+						),
+						TR(
+							td( {-colspan=>"2"}, "The Minimum Tag Count represents the minimum number of times a SAGE tag must be found in at least one of the selected libraries for inclusion in the analysis.  Use this tool to filter out low frequency tags.<br>&nbsp;")
+						),
+			                        TR(
+			                                td(b("Primary Tags Only")),
+			                                td(checkbox_group( -name=>'primary_tags',
+			                                        -values=>'True'))
+			                        ),
+						TR(
+							td(  {-colspan=>"2"}, "Primary SAGE Tags are those generated by the most 3&acute; <a href=\"http://www.neb.com/neb/products/res_enzymes/125.html\">Nla III</a> restriction site on the theoretical transcript.<br>&nbsp")
+						),
+						TR(
+							td(b("R Value")), 
+			                                td(textfield({-name=>"r_val", -default=>"4", -size=>5}) . ' ' . popup_menu(-name=>"rval_gl", -values=>["greater than", "less than"]))
+						),
+						TR(
+							td( {-colspan=>"2"}, "The R-Value is the log-likelihood ratio statistic of <a href=\"http://www.ncbi.nlm.nih.gov:80/entrez/query.fcgi?cmd=Retrieve&db=pubmed&dopt=Abstract&list_uids=11116099\">Stekel <i>et al</i> (2000)</a>, which scores tags by their deviation from the null hypothesis of equal frequencies. Higher scores represent a greater deviation from the null hypothesis, while scores close to zero represent near constitutive expression.<br>&nbsp;")
+						),
+						TR(
+							td(b("Regulation")),
+							td(
+								'Is ' . popup_menu(-name=>"regulation", -values=>["Not Relevant", "upregulated", "downregulated", "exclusive"]) . 
+								'<br>In ' . 
+								popup_menu(-name=>"regulation_regulated_in", -values=>\@lib_array_libs, -labels=>\%lib_hash) .
+								'<br>Vs ' .
+								popup_menu(-name=>"regulation_regulated_vs", -values=>\@lib_array_libs_all, -labels=>\%lib_hash) 
+							)
+						),
+						TR(
+							td( {-colspan=>"2"}, "This allows you to determine tags that are up or downregulated between libraries<br>&nbsp;")
+						),
+						TR(
+			                                td(b("Perform Clustering")),
+			                                td(checkbox_group( -name=>'do_cluster',
+			                                        -values=>'True',
+			                                        -defaults=>['F']) . " " . popup_menu(-name=>"num_clusters", -values=>[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25], -default=>10) . " Clusters")
+			                        ),
+						TR(
+							td( {-colspan=>"2"}, "Analysis of SAGE data using this tool automatically includes clustering of gene expression profiles using log transformation, median centering, Pearson's corrleation coefficient, and kmeans/median clustering.<br>&nbsp;")
+						),
+                                                TR(
+                                                        td(b("Shade Expression Levels Based on Median Centering")),
+                                                        td(checkbox_group( -name=>'color_median',
+                                                                -values=>'True',
+                                                                -defaults=>['F']) )
+                                                ),
+                                                TR(
+                                                        td( {-colspan=>"2"}, "Median centering forces shading of expression levels to ignore magnitude of expression, thus highlighting correlated patterns of expression among lowly and highly expressed genes in the search results.<br>&nbsp;")
+                                                ),
+			                        TR(
+			                                td(b("Sort By")),
+			                                td(popup_menu(-name=>"sort_by",
+			                                        -values=>["Tag ID","Tag Sequence","Description", "R-Value", "ORF ID", "Cluster"]) . 
+							popup_menu(-name=>"sort_order", -values=>["descending","ascending"] ) 
+							)
+			                        ),
+						TR( td("&nbsp") ),
+						TR(
+							td(b("View Data As")),
+							td(popup_menu(-name=>"export_type",
+								-values=>["HTML", "Tab Delimited", "Cluster 3.0", "CLUTO", "TableView", "IDEG6"]))
+						),
+						TR(
+							td( {-colspan=>"2"}, "For more complex analyses, output options include tab-delimited and the input formats for <a href=\"http://rana.lbl.gov/EisenSoftware.htm\">Cluster 3.0</a>, <a href=\"http://cluto.ccgb.umn.edu/cgi-bin/wCluto/wCluto.cgi\">wCLUTO</a>, <a href=\"http://ccgb.umn.edu/software/java/apps/TableView/\">TableView</a>, and <a href=\"http://telethon.bio.unipd.it/bioinfo/IDEG6/\">IDEG6</a>.<br>&nbsp;")
+						),
+					),
+					hidden(-name=>'organism', -value=>$mbl->organism),
+					hidden(-name=>'page', -value=>'sageresults'),
+					hidden(-name=>'one_rule', -value=>'T'),
+					hidden(-name=>'recalculate', -value=>'T'),
+					hidden(-name=>'include_tagid', -value=>'T'),
+					hidden(-name=>'include_orfid', -value=>'T'),
+					hidden(-name=>'include_r_val', -value=>'T'),
+					hidden(-name=>'sequence_type', -value=>'relative abundance'),
+					hidden(-name=>'unique_mapping', -value=>'F').
+					hidden(-name=>'have_description', -value=>'F'),
+					hidden(-name=>'desc_type', -value=>'combination'),
+					hidden(-name=>'cluter_type', -value=>'kmeans/median'),
+					hidden(-name=>'distance_method', -value=>'c'),
+					hidden(-name=>'average_method', -value=>'m'),
+					hidden(-name=>'cluster_data_type', -value=>'raw sequence count'),
+					end_form,
+				)
+			) )
+		),
+		p ;
+	print "</center>";
+}
+untie(%session);
+
+[% END %]

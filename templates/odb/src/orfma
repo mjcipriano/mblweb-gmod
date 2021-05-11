@@ -1,0 +1,156 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $orfid;
+if(param('orf') =~ /^orf\:/)
+{
+	($orfid) = param('orf') =~ /^orf\:(\d+)/;
+} else
+{
+	$orfid = param('orf');
+}
+ 
+my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+
+if($attrib_row->{delete_fg} eq 'Y')
+{
+	print '<h2><center> This orf has been marked as deleted for reason <b>"' . $attrib_row->{delete_reason} . '"</b>.</center></h2><br>';
+}
+
+
+
+# Show high blast results
+
+my $blast_result_h = $mbl->query('get_orf_blast_results');
+
+
+print 	h2( "Blast Results");
+
+print   "<table border=0 cellspacing=5>\n","<tr>",
+                        td( h3('View Full reports:') );
+
+if($mbl->check_orf_full_blast_report($orfid, 'swissprot'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'swissprot'));
+
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'nr'))
+{
+	print td($mbl->show_blast_full_link($orfid, 'orf', 'nr'));
+}
+if($mbl->check_orf_full_blast_report($orfid, 'Pfam_ls'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'Pfam_ls'));
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'mitop'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'mitop'));
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'RefEuks'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'RefEuks'));
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'RefTax'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'RefTax'));
+}
+
+print "</tr></table><br>";
+
+if(param('select_seqs') eq 'Y')
+{
+	print '<form action="' . $mbl->organism_home . '">';
+}
+print	"<table border=1>",
+	"<tr>";
+if(param('select_seqs') eq 'Y')
+{
+	print td();
+}
+print
+			th("Database"),
+			th("Accession"),
+			th("Hit"),
+			th("Query"),
+			th("evalue"),
+			th("Identical"),
+			th("Conserved"),
+			th("Description"),
+		"</tr>";
+$blast_result_h->execute($orfid, 1e-01);
+
+while(my $brow = $blast_result_h->fetchrow_hashref)
+{
+	print "<tr>";
+	if(param('select_seqs') eq 'Y')
+	{
+		if($brow->{name} eq 'swissprot' || $brow->{name} eq 'nr' || $brow->{name} eq 'nt' || $brow->{name} eq 'mitop' || $brow->{name} eq 'RefTax' || $brow->{name} eq 'RefEuks')
+		{
+			print td('<input type="checkbox" name="accessions" value="' . $brow->{accession_number} . '">' );
+		} else
+		{
+			print td("&nbsp");
+		}
+	}
+	print
+			td( $brow->{name} ),
+			td( $mbl->ncbi_link($brow->{accession_number}) ),
+			td( $brow->{hit_start} . "-" . $brow->{hit_end} ),
+			td( $brow->{query_start} . "-" . $brow->{query_end} ),
+			td( $brow->{evalue} ),
+			td( $brow->{frac_identical} ),
+			td( $brow->{frac_conserved} ),
+			td( $brow->{description} );
+	print "</tr>";
+}
+print "</table>";
+
+if(param('select_seqs') eq 'Y')
+{
+	print 	hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'orf', -value=>$orfid),
+                '<INPUT type="hidden" name="page" value="multiple_alignment">',
+		p,
+		"Comma Separated list of orfs from this genome:", textfield({-name=>"gorfs"}),p,
+		"Fasta Sequences", textarea(-name=>'SEQUENCE', -columns=>60),p,
+		"Format: " , popup_menu(-name=>"format",
+                                        -values=>[
+						"jalview",
+						"clustalw",
+						"fasta",
+						"mega",
+						"msf",
+						"nexus",
+						"pfam",
+						"phylip",
+						"psi",
+						"selex"
+						], -default=>'jalview'),
+		submit( -name=>'submit', -value=>'Create Multiple Alignment'),
+		submit( -name=>'submit', -value=>'Download Sequences'),
+		"</form>";
+}
+
+[% END %]

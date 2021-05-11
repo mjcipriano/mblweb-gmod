@@ -1,0 +1,23 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+
+[% INCLUDE blastfulldata %]
+
+<table border=0 width="100%" class="searchtitle">
+	
+	<tr>
+		<td>
+		
+		[% html_bottom %]
+
+		</td>
+	</tr>
+
+</table>
+
+[% 
+INCLUDE footer 
+footer_projectenquiries = html_projectenquiries
+footer_gmodenquiries = html_gmodenquiries
+%]

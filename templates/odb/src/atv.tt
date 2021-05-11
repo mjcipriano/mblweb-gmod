@@ -1,0 +1,13 @@
+<HTML><HEAD><TITLE>ATV
+</TITLE></HEAD><BODY>
+<CENTER><B>
+Please do not close this window<BR>as long as you want to use ATV.
+<APPLET ARCHIVE = "ATVapplet.jar"
+ CODEBASE="/"
+ CODE = "forester.atv_awt.ATVapplet.class"
+ WIDTH = 200 HEIGHT = 50
+<PARAM NAME = url_of_tree_to_load
+ VALUE = [% INCLUDE treelink %] 
+</APPLET>
+</BODY></HTML>
+

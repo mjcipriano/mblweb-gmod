@@ -1,0 +1,17 @@
+[% INCLUDE header 
+   text_title = html_title_text 
+%]
+[% html_header %]
+<p>
+<hr>
+<table border="0" width="100%">
+	
+	<tr>
+		<td width="48%" valign="top">
+
+			[% INCLUDE newsdata %]
+
+		</td>
+	</tr>
+
+</table>

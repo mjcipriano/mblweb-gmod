@@ -1,0 +1,397 @@
+[% PERL %]
+
+use Mbl; 
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+ 
+use strict;
+  
+my $mbl = Mbl::new(path_info(), param('organism'));
+
+my $dbh = $mbl->dbh();
+
+my $session_id = $stash->get('session_id');
+my %session;
+ 
+        tie %session, "Apache::Session::File", $session_id, {
+                Directory => $mbl->session_tmp_dir,
+        };
+
+my $orfid;
+if(param('orf') =~ /^orf\:/)
+{
+	($orfid) = param('orf') =~ /^orf\:(\d+)/;
+} else
+{
+	$orfid = param('orf');
+}
+ 
+my $attrib_row = $mbl->get_orf_attributes_hash($orfid);
+
+if($attrib_row->{delete_fg} eq 'Y')
+{
+	print '<h2><center> This orf has been marked as deleted for reason <b>"' . $attrib_row->{delete_reason} . '"</b>.</center></h2><br>';
+}
+
+my $imgstart = $attrib_row->{start} - 5000;
+my $imgstop = $attrib_row->{stop} + 5000;
+
+print center(
+	'<a href="' . $mbl->gbrowse_organism_cgi . "?ref=" . $attrib_row->{contig} . ";start=$imgstart;stop=$imgstop\"><img src=\"" . $mbl->gbrowse_organism_img . "?name=" . $attrib_row->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3\"></a>",br,
+	i('<a href="' . $mbl->gbrowse_organism_img . "?name=" . $attrib_row->{contig} .  ":$imgstart..$imgstop;width=800;type=ORFs+3+Gene+3&image_class=SVG\">Click here for publication quality image (SVG)</a>"), br
+	);
+
+
+print   "Orf:" ,
+        $mbl->gbrowse_orf_link($orfid) . '<br>';
+
+print 	"<table border=1 width='500'>\n";
+
+my $blast_dropdown = 'Program:<select name="SequenceFinder.program">
+<option value="blastn">blastn</option>
+<option SELECTED value="tblastx">tblastx</option></select><br>
+Expect:
+<select name="SequenceFinder.expect">
+<option value="0.0001">0.0001</option>
+<option SELECTED value="0.01">0.01</option>
+<option value="1">1</option>
+<option value="10">10</option>
+<option value="100">100</option>
+<option value="1000">1000</option>
+</select><br>
+';
+
+
+my $sequence = $mbl->get_orf_nt_sequence($orfid);
+
+my $trans_seq = $mbl->get_orf_aa_sequence($orfid);
+
+print TR( 
+	td("Blast Sequence against Organism in:"),
+	td( {-bgcolor=>"lightblue"},
+	center(	
+			start_form( action=>$mbl->gbrowse_organism_cgi, method=>'POST'),
+			$blast_dropdown,
+			hidden( -name=>"plugin", -value=>"SequenceFinder"),
+			hidden( -name=>"plugin_action", -value=>"Find"),
+			hidden( -name=>"SequenceFinder.searchsequence", -value=>"$sequence"),
+			submit( -name=>"Gbrowse", -value=>"Gbrowse"),
+			end_form 
+		)
+	),
+	td( {-bgcolor=>"orange"},
+		center(
+			start_form(  -method=>'POST', -action=>"/blast/blast.cgi" ),
+			"DB:", popup_menu( -name=>"DATALIB",
+					   -values=>[$mbl->organism, $mbl->organism . '_orfs_nt'],
+					   -labels=>{$mbl->organism=>'Contigs',
+						     $mbl->organism . '_orfs_nt'=>'Orfs'} ),
+			popup_menu( -name=>"PROGRAM",
+				    -values=>[qw/tblastx blastn/] ),
+			br(),
+			"Expect: ",
+			popup_menu( -name=>"EXPECT",
+				    -values=>[qw/0.0001 0.01 1 10 100 1000/] ),
+			br(),
+			hidden( -name=>"SEQUENCE", -value=>$sequence),
+			submit( -name=>"Blast", -value=>"Blast Report"),
+			end_form()
+		)
+	),
+	td( {-bgcolor=>"orange"},
+                center(
+                        start_form(  -method=>'POST', -action=>"/blast/blast.cgi" ),
+                        "DB:", popup_menu( -name=>"DATALIB",
+                                           -values=>[$mbl->organism . '_orfs_aa'],
+                                           -labels=>{$mbl->organism . '_orfs_aa'=>'Orfs'} ),
+                        popup_menu( -name=>"PROGRAM",
+                                    -values=>[qw/blastp/] ),
+                        br(),
+                        "Expect: ",
+                        popup_menu( -name=>"EXPECT",
+                                    -values=>[qw/0.0001 0.01 1 10 100 1000/] ),
+                        br(),
+                        hidden( -name=>"SEQUENCE", -value=>$trans_seq),
+                        submit( -name=>"Blast", -value=>"Blast Report"),
+                        end_form()
+                )
+        ),
+);
+print "</table>";
+
+
+
+# Show which sage tags are mapped to this orf
+
+my $sageh = $mbl->get_orf_sagetags_h($orfid);
+my $sagetag_href = '';
+
+my $access_libs = $mbl->get_sage_access_libraries($session{'login_id'});
+
+while(my $sagetag_row = $sageh->fetchrow_hashref)
+{
+	$sagetag_href .= $mbl->sagetag_link($sagetag_row->{tagid}) .'(' . $sagetag_row->{tagtype} . ')<br>';
+}
+
+
+print table( { -border=>1, width=>"600"}, TR(
+		td({ -bgcolor=>'yellow'}, 'Contig'),
+		td($attrib_row->{contig})
+	),
+	TR(
+                td({ -bgcolor=>'yellow'}, 'Start'),
+                td($attrib_row->{start})
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Stop'),
+                td($attrib_row->{stop})
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Direction'),
+                td($attrib_row->{direction})
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Source'),
+                td($attrib_row->{source})
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Test Code'),
+                td($attrib_row->{TestCode}, i('(' . $attrib_row->{TestScore} . ')'))
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Gene Scan'),
+                td($attrib_row->{GeneScan}, i('(' . $attrib_row->{GeneScanScore} . ')'))
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Codon Preference'),
+                td($attrib_row->{CodonPreference}, i('(' . $attrib_row->{CodonPreferenceScore} . ')'))
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Codon Usage'),
+                td($attrib_row->{CodonUsage})
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Annotation ', a( {-href=>$mbl->organism_home . "?page=annotation&orfid=" . $orfid}, '(view all)')),
+                td($mbl->get_newest_annotation($orfid))
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Annotation Type'),
+                td('Automatic'),
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Attributes'),
+                td($attrib_row->{attributes}),
+        ),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Sage Tags'),
+                td($sagetag_href),
+        ),
+	TR(
+		td({ -bgcolor=>'yellow'}, 'Alignments'),
+		td($mbl->get_alignment_links($orfid))
+	),
+        TR(
+                td({ -bgcolor=>'yellow'}, 'Trees'),
+                td($mbl->get_tree_links($orfid))
+        ),
+);
+
+
+
+
+# Show high blast results
+
+my $blast_result_h = $mbl->query('get_orf_blast_results');
+
+
+print 	h2( "Blast Results");
+
+print   "<table border=0 cellspacing=5>\n","<tr>",
+                        td( h3('View Full reports:') );
+if($mbl->check_orf_full_blast_report($orfid, 'swissprot'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'swissprot'));
+
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'nr'))
+{
+	print td($mbl->show_blast_full_link($orfid, 'orf', 'nr'));
+}
+if($mbl->check_orf_full_blast_report($orfid, 'Pfam_ls'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'Pfam_ls'));
+}
+
+if($mbl->check_orf_full_blast_report($orfid, 'mitop'))
+{
+        print td($mbl->show_blast_full_link($orfid, 'orf', 'mitop'));
+}
+
+print "</tr></table><br>";
+
+print $mbl->orf_multiple_alignment_link($orfid) . '<p>'; 
+
+if(param('select_seqs') eq 'Y')
+{
+	print '<form action="' . $mbl->organism_home . '">';
+}
+print	"<table border=1>",
+	"<tr>";
+if(param('select_seqs') eq 'Y')
+{
+	print td();
+}
+print
+			th("Database"),
+			th("Accession"),
+			th("Hit"),
+			th("Query"),
+			th("evalue"),
+			th("Identical"),
+			th("Conserved"),
+			th("Description"),
+		"</tr>";
+$blast_result_h->execute($orfid, 1e-05);
+
+while(my $brow = $blast_result_h->fetchrow_hashref)
+{
+	print "<tr>";
+	if(param('select_seqs') eq 'Y')
+	{
+		if($brow->{name} eq 'swissprot' || $brow->{name} eq 'nr' || $brow->{name} eq 'nt' || $brow->{name} eq 'mitop' || $brow->{name} eq 'RefTax')
+		{
+			print td('<input type="checkbox" name="accessions" value="' . $brow->{accession_number} . '">' );
+		} else
+		{
+			print td("&nbsp");
+		}
+	}
+	print
+			td( $brow->{name} ),
+			td( $mbl->ncbi_link($brow->{accession_number}) ),
+			td( $brow->{hit_start} . "-" . $brow->{hit_end} ),
+			td( $brow->{query_start} . "-" . $brow->{query_end} ),
+			td( $brow->{evalue} ),
+			td( $brow->{frac_identical} ),
+			td( $brow->{frac_conserved} ),
+			td( $brow->{description} );
+	print "</tr>";
+}
+print "</table>";
+
+if(param('select_seqs') eq 'Y')
+{
+	print 	hidden(-name=>'organism', -value=>$mbl->organism),
+		hidden(-name=>'orf', -value=>$orfid),
+                '<INPUT type="hidden" name="page" value="multiple_alignment">',
+		p,
+		"Format: " , popup_menu(-name=>"format",
+                                        -values=>[
+						"clustalw",
+						"fasta",
+						"mega",
+						"msf",
+						"nexus",
+						"pfam",
+						"phylip",
+						"psi",
+						"selex"
+						], -default=>'clustalw'),
+		submit( -name=>'submit', -value=>'Create Multiple Alignment'),
+		submit( -name=>'submit', -value=>'Download Sequences'),
+		"</form>";
+}
+
+
+# Get flanking region, 3' and 5' if part of a contig
+if($attrib_row->{contig} ne undef)
+{
+	my $flank_start = $attrib_row->{start} - 200;
+	my $flank_stop = $attrib_row->{stop} + 200;
+	if($flank_start <= 0)
+	{
+		$flank_start = 1;
+	}
+
+	my $fiveprime;
+	my $threeprime;
+
+	# Do 5' end
+	my $subseq = $mbl->get_region($attrib_row->{contig}, $flank_start, $attrib_row->{start} - $flank_start +3); 	
+	if($attrib_row->{direction} eq '+')
+	{
+		$fiveprime = $subseq;
+	} else
+	{
+		$threeprime = $subseq;
+	}
+
+
+	# Do 3' end
+	my $subseq = $mbl->get_region($attrib_row->{contig}, $attrib_row->{stop} -3, $flank_stop - $attrib_row->{stop});
+	if($attrib_row->{direction} eq '+')
+	{
+		$threeprime = $subseq;
+	} else
+	{
+		$fiveprime = $subseq;
+	}
+
+	# reverse complement if it is in - direction;
+
+	if($attrib_row->{direction} eq '-')
+	{
+		$threeprime =~ tr/ATGCatgc/TACGtacg/;
+		$threeprime = reverse($threeprime);
+		$fiveprime =~ tr/ATGCatgc/TACGtacg/;
+		$fiveprime = reverse($fiveprime);
+	}
+
+	$threeprime = join("\n", split /(.{80})/, $threeprime);
+	$threeprime =~ s/\n\n/\n/g;
+	$fiveprime = join("\n", split /(.{80})/, $fiveprime);
+	$fiveprime =~ s/\n\n/\n/g;
+
+	print
+	        h2("5' Flanking Region"),
+	        table( {width=>"80%"},
+	                TR(
+	                        td( b(pre( uc($fiveprime) ) ))
+	                )
+	        ),
+	        h2("3' Flanking Region"),
+	        table( {width=>"80%"},
+	                TR(
+	                        td( b(pre( uc($threeprime) ) ))
+	                )
+	        );
+
+}
+my $sequence_string = join("\n", split /(.{80})/, $sequence);
+$sequence_string =~ s/\n\n/\n/g;
+
+
+$trans_seq = join("\n", split /(.{80})/, $trans_seq);
+
+$trans_seq =~ s/\n\n/\n/g;
+	
+print 	
+	h2("Sequence"),
+	table( {width=>"80%"},
+		TR(
+			td( b(pre( uc($sequence_string) ) ))
+		)
+	),
+	h2("Translation"),
+        table( {width=>"80%"},
+                TR(
+                        td( b(pre( $trans_seq ) ) )
+                )
+        )
+;
+
+
+[% END %]

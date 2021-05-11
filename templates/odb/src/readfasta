@@ -1,0 +1,46 @@
+[% PERL %]
+
+use Mbl;  
+use CGI qw(:all);
+use CGI::Pretty;
+use DBI;
+use Bio::Seq;
+
+use strict;
+
+my $mbl = Mbl::new(path_info(), param('organism'));
+my $dbh = $mbl->dbh();   
+
+print "<h4>Read: ";
+print  $mbl->read_link(param('read'));
+print "</h4>";
+print "<br>\n";
+print "<pre>\n";
+print ">TRIMMED " . param('read');
+print $mbl->wrap(uc($mbl->get_read_sequence_trim(param('read'))));
+print "\n\n";
+
+print ">UNTRIMMED " . param('read');
+print $mbl->wrap(uc($mbl->get_read_sequence(param('read'))));
+print "\n\n";
+
+my $read_data = $mbl->read_info(param('read'));
+if($read_data->{contig_number})
+{
+	my ($contig, $start, $len) = ($read_data->{contig_number}, $read_data->{trim_read_in_contig_start}, $read_data->{read_len_trim});
+	my $stop = $len + $start;
+	print ">CONTIG CONSENSUS contig $contig $start\-$stop ";
+	print $mbl->wrap(uc($mbl->get_region($contig, $start, $len)));
+	print "\n\n";
+}
+
+print ">QUAL-UNTRIMMED " . param('read') . "\n";;
+print $mbl->get_read_qual_sequence(param('read'));
+print "\n\n";
+
+print "</pre>";
+
+
+
+
+[% END %]
